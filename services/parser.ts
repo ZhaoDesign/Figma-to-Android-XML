@@ -48,6 +48,7 @@ const parseGradient = (gradientStr: string): Gradient | null => {
 
   let angle = 180; // Default to bottom
   let stopsStartIndex = 0;
+  let rawGeometry: string | undefined = undefined;
 
   const firstPart = parts[0];
   const firstPartLower = firstPart.toLowerCase();
@@ -60,13 +61,13 @@ const parseGradient = (gradientStr: string): Gradient | null => {
     isGeometry = firstPartLower.includes('deg') || firstPartLower.includes('to ') || !!firstPartLower.match(/^\d+(\.\d+)?(turn|rad|grad)$/);
   } else {
     // Valid radial geometry: "circle at ...", "50% 50% at ...", "at top left"
-    // Figma usually outputs: "50% 50% at 50% 50%"
-    // We check for keywords 'at', 'circle', 'ellipse' or if it looks like coordinates followed by 'at'
+    // Figma usually outputs: "50% 50% at 50% 50%" or just coordinates
     isGeometry = firstPartLower.includes('at ') || firstPartLower.includes('circle') || firstPartLower.includes('ellipse');
   }
 
   if (isGeometry) {
     stopsStartIndex = 1;
+    rawGeometry = firstPart; // Capture the exact CSS geometry definition
     
     if (isLinear) {
         if (firstPartLower.includes('deg')) {
@@ -89,17 +90,14 @@ const parseGradient = (gradientStr: string): Gradient | null => {
   const stops: ColorStop[] = [];
   const stopParts = parts.slice(stopsStartIndex);
   
-  // Regex to capture Color and optional Position
   stopParts.forEach((part, index) => {
     // Matches: (color string) (spacing) (percentage/length)
-    // Updated to support negative signs: -20%
     const match = part.match(/^([\s\S]+?)(?:\s+(-?[\d.]+%?|-?[\d.]+px))?$/);
     
     if (match) {
       let colorStr = match[1].trim();
       let positionStr = match[2];
 
-      // Clean up color string (remove inner spaces if it's hex, though invalid in CSS, valid for some copies)
       if (colorStr.startsWith('#') && colorStr.includes(' ')) {
           colorStr = colorStr.split(' ')[0];
       }
@@ -108,7 +106,6 @@ const parseGradient = (gradientStr: string): Gradient | null => {
       if (positionStr) {
         position = parseFloat(positionStr);
       } else {
-        // Infer position if missing
         position = index === 0 ? 0 : index === stopParts.length - 1 ? 100 : (index / (stopParts.length - 1)) * 100;
       }
 
@@ -122,6 +119,7 @@ const parseGradient = (gradientStr: string): Gradient | null => {
   return {
     type: isLinear ? GradientType.Linear : GradientType.Radial,
     angle,
+    rawGeometry, // Return the raw string for the preview canvas
     stops
   };
 };
@@ -131,13 +129,9 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   tempDiv.style.display = 'none';
   document.body.appendChild(tempDiv);
 
-  // 1. Clean comments /* ... */
   let cleanText = text.replace(/\/\*[\s\S]*?\*\//g, '');
-  
-  // 2. Normalize format
   cleanText = cleanText.replace(/[{}]/g, '').replace(/\n/g, ';');
   
-  // 3. Smart Detection
   if (!cleanText.includes(':')) {
     const trimmed = cleanText.trim();
     if (trimmed.startsWith('linear-gradient') || trimmed.startsWith('radial-gradient') || trimmed.startsWith('#') || trimmed.startsWith('rgb')) {
@@ -148,11 +142,9 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   tempDiv.setAttribute('style', cleanText);
   const style = tempDiv.style;
   
-  // 1. Dimensions
   const width = pxToNum(style.width) || 200;
   const height = pxToNum(style.height) || 60;
   
-  // 2. Corners
   const radiusStr = style.borderRadius || '0px';
   const radii = radiusStr.split(' ').map(pxToNum);
   let corners: number | Corners = 0;
@@ -167,7 +159,6 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
     corners = radii[0] || 0;
   }
 
-  // 3. Fills
   const fills: Fill[] = [];
   const bgImage = style.backgroundImage;
   const bgColor = style.backgroundColor;
@@ -195,7 +186,6 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
     });
   }
 
-  // 4. Shadows
   const shadows: Shadow[] = [];
   const boxShadow = style.boxShadow;
   
