@@ -165,7 +165,7 @@ const generateCorners = (corners: Corners | number): string => {
         android:bottomRightRadius="${corners.bottomRight}dp" />\n`;
 };
 
-const generateGradient = (gradient: Gradient): string => {
+const generateGradient = (gradient: Gradient, layerWidth: number, layerHeight: number): string => {
   const { angle = 180, stops, type, rawGeometry } = gradient;
   
   const rawStart = getColorAtPosition(stops, 0);
@@ -202,7 +202,7 @@ const generateGradient = (gradient: Gradient): string => {
              posPart = rawGeometry.substring(atIndex + 3).trim();
          }
 
-         // Parse Position -> centerX, centerY
+         // 1. Parse Position -> centerX, centerY
          if (posPart) {
              const pos = parsePosition(posPart);
              if (pos) {
@@ -211,23 +211,44 @@ const generateGradient = (gradient: Gradient): string => {
              }
          }
 
-         // Parse Size -> gradientRadius
-         // Handle "67% 100%" -> Max(67, 100) -> 100%
+         // 2. Parse Size -> gradientRadius
+         // This is the tricky part. Figma "dots" allow Ellipses (W != H). Android is Circle.
+         // If we use %p, Android applies it to the View's dimension (often width).
+         // Figma: "67% 100%" means 67% of Width, 100% of Height.
+         // On a 300x50 button: W_R = 200px, H_R = 50px.
+         // If we use %p (e.g. 67%p), Android might make a 200px Circle.
+         // A 200px circle is HUGE vertically (4x the button height). This looks wrong (too big).
+         // To emulate the "visual weight" of a squashed ellipse, we should calculate the effective pixel size
+         // and average it, then export as 'dp'.
+         
          const matches = sizePart.match(/(\d+(?:\.\d+)?)(%|px)/g);
          if (matches && matches.length > 0) {
-             let maxVal = 0;
-             let unit = '%p';
-             matches.forEach(m => {
+             let radiiPx: number[] = [];
+             
+             matches.forEach((m, index) => {
                 const val = parseFloat(m);
+                // First value is Width, Second is Height (CSS standard)
+                // If only one, it's uniform.
+                const isWidth = matches.length === 1 || index === 0;
+                
                 if (m.includes('%')) {
-                    if (val > maxVal) { maxVal = val; unit = '%p'; }
+                    const base = isWidth ? layerWidth : layerHeight;
+                    radiiPx.push((val / 100) * base);
                 } else {
                     // px
-                    if (val > maxVal) { maxVal = val; unit = 'dp'; } 
+                    radiiPx.push(val);
                 }
              });
-             if (maxVal > 0) {
-                 radiusVal = `${Math.round(maxVal)}${unit}`;
+
+             // Calculate average radius in pixels to convert Ellipse -> Circle representation
+             if (radiiPx.length > 0) {
+                 const sum = radiiPx.reduce((a, b) => a + b, 0);
+                 const avgPx = sum / radiiPx.length;
+                 
+                 // If the computed radius is super small (invalid), fallback.
+                 if (avgPx > 1) {
+                    radiusVal = `${Math.round(avgPx)}dp`;
+                 }
              }
          }
     }
@@ -283,7 +304,8 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
         if (fill.type === 'solid') {
             xml += `            <solid android:color="${toAndroidHex(fill.value as string)}" />\n`;
         } else {
-            xml += generateGradient(fill.value as Gradient);
+            // Pass layer dimensions for calculating radius
+            xml += generateGradient(fill.value as Gradient, layer.width, layer.height);
         }
         xml += generateCorners(layer.corners);
         xml += `        </shape>\n`;
@@ -311,7 +333,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
          if (fill.type === 'solid') {
             xml += `    <solid android:color="${toAndroidHex(fill.value as string)}" />\n`;
         } else {
-            xml += generateGradient(fill.value as Gradient);
+            xml += generateGradient(fill.value as Gradient, layer.width, layer.height);
         }
     }
     xml += generateCorners(layer.corners);
