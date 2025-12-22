@@ -9,15 +9,16 @@ export const translations = {
     visualPreview: "Visual Preview",
     previewOverlay: "Preview",
     generatedXml: "Generated XML",
-    apiCompatible: "API 21+ Compatible",
+    apiCompatible: "Vector & Shape Support",
     supportedFeatures: "Supported Features:",
     features: [
-      "Linear & Radial Gradients (mapped to Android angles)",
-      "Multi-layer gradients (using <layer-list>)",
-      "Corner Radius (Uniform & Independent)",
-      "Solid Fills & Basic Opacity"
+      "Drop & Inner Shadows (X, Y, Blur, Spread)",
+      "Background & Layer Blur (metadata comments)",
+      "Linear & Radial Gradients (Complex geometries)",
+      "Noise & Texture detection",
+      "Corner Radius (Uniform & Independent)"
     ],
-    proTip: "Pro Tip: For best results, ensure Figma gradients use standard angles (0, 45, 90, etc.).",
+    proTip: "Pro Tip: Complex shadows are approximated using offset layers in VectorDrawables.",
     errors: {
       notCss: "Clipboard content doesn't look like CSS. In Figma, try Right Click > Copy as CSS.",
       parseFail: "Failed to parse visual properties.",
@@ -32,15 +33,16 @@ export const translations = {
     visualPreview: "视觉预览",
     previewOverlay: "预览",
     generatedXml: "生成的 XML",
-    apiCompatible: "兼容 API 21+",
+    apiCompatible: "支持 Vector 与 Shape",
     supportedFeatures: "支持功能：",
     features: [
-      "线性与径向渐变（自动映射 Android 角度）",
-      "多层渐变（自动转换为 <layer-list>）",
-      "圆角设置（支持统一或独立圆角）",
-      "纯色填充与基础不透明度"
+      "投影与内阴影（X, Y, 模糊, 扩展）",
+      "背景模糊与图层模糊（代码注释提示）",
+      "线性与径向渐变（支持复杂几何变换）",
+      "噪点与纹理检测",
+      "圆角设置（支持统一或独立圆角）"
     ],
-    proTip: "小贴士：为获最佳效果，请尽量在 Figma 中使用标准渐变角度（0、45、90 等）。",
+    proTip: "小贴士：复杂阴影通过 VectorDrawable 的偏移层进行视觉拟合。",
     errors: {
       notCss: "剪贴板内容不符合 CSS 格式。请在 Figma 中尝试“右键 > Copy as CSS”。",
       parseFail: "无法解析视觉属性，请检查复制内容。",
