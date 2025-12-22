@@ -12,26 +12,17 @@ const renderGradient = (g: Gradient): string => {
     .map(s => `${s.color} ${s.position}%`)
     .join(', ');
 
-  // If we captured the raw CSS geometry (e.g. "50% 50% at 50% 50%" or "180deg"), use it directly.
-  // This ensures the preview looks EXACTLY like Figma, even if the user dragged handles way outside the box.
   if (g.rawGeometry) {
-    if (g.type === GradientType.Linear) {
-      return `linear-gradient(${g.rawGeometry}, ${stopsStr})`;
-    } else {
-      return `radial-gradient(${g.rawGeometry}, ${stopsStr})`;
-    }
+    if (g.type === GradientType.Linear) return `linear-gradient(${g.rawGeometry}, ${stopsStr})`;
+    return `radial-gradient(${g.rawGeometry}, ${stopsStr})`;
   }
     
-  // Fallback defaults if parsing missed the geometry
-  if (g.type === GradientType.Linear) {
-    return `linear-gradient(${g.angle || 180}deg, ${stopsStr})`;
-  } else {
-    return `radial-gradient(circle at 50% 50%, ${stopsStr})`;
-  }
+  if (g.type === GradientType.Linear) return `linear-gradient(${g.angle || 180}deg, ${stopsStr})`;
+  return `radial-gradient(circle at 50% 50%, ${stopsStr})`;
 };
 
 export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
-  // 1. Shadows
+  // 1. Shadows (Drop and Inner)
   const boxShadows = data.shadows
     .filter(s => s.visible)
     .map(s => {
@@ -41,49 +32,23 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
     .join(', ');
 
   // 2. Corners
-  let borderRadius = '';
-  if (typeof data.corners === 'number') {
-    borderRadius = `${data.corners}px`;
-  } else {
-    borderRadius = `${data.corners.topLeft}px ${data.corners.topRight}px ${data.corners.bottomRight}px ${data.corners.bottomLeft}px`;
-  }
+  const borderRadius = typeof data.corners === 'number' 
+    ? `${data.corners}px` 
+    : `${data.corners.topLeft}px ${data.corners.topRight}px ${data.corners.bottomRight}px ${data.corners.bottomLeft}px`;
 
-  // 3. Dimensions & Base Style
+  // 3. Main Container Styles
   const containerStyle: React.CSSProperties = {
     width: data.width,
     height: data.height,
-    boxShadow: boxShadows,
     borderRadius: borderRadius,
     position: 'relative',
     transition: 'all 0.3s ease',
-    overflow: 'hidden', // Clip children to corners
-    isolation: 'isolate', // Create stacking context
+    overflow: 'hidden',
+    isolation: 'isolate',
+    filter: data.blur ? `blur(${data.blur}px)` : undefined,
+    backdropFilter: data.backdropBlur ? `blur(${data.backdropBlur}px)` : undefined,
+    WebkitBackdropFilter: data.backdropBlur ? `blur(${data.backdropBlur}px)` : undefined,
   };
-
-  // 4. Layers (Fills)
-  // Figma/CSS 'fills' array is Top-to-Bottom (Index 0 is Top).
-  // DOM Stacking is Bottom-to-Top (Last child is Top).
-  // So we render fills.reverse().
-  // HOWEVER: We want Index 0 (Top) to be rendered LAST (on top).
-  // So we iterate data.fills.slice().reverse().
-  const layers = [...data.fills].reverse().map((fill, index) => {
-    if (!fill.visible) return null;
-
-    const background = fill.type === 'solid' 
-      ? (fill.value as string)
-      : renderGradient(fill.value as Gradient);
-
-    return (
-      <div
-        key={index}
-        style={{
-          position: 'absolute',
-          inset: 0,
-          background: background,
-        }}
-      />
-    );
-  });
 
   return (
     <div className="w-full h-full min-h-[400px] flex flex-col items-center justify-center bg-[url('https://grainy-gradients.vercel.app/noise.svg')] bg-gray-950 relative overflow-hidden border border-gray-750 rounded-xl">
@@ -91,20 +56,49 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
            style={{ backgroundImage: 'radial-gradient(#475569 1px, transparent 1px)', backgroundSize: '20px 20px' }}>
       </div>
       
-      {/* The Component Preview */}
-      <div style={containerStyle}>
-        {layers}
-        
-        {/* Label Overlay (Centered) */}
-        <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
-          <span className="text-white font-medium mix-blend-overlay text-lg select-none drop-shadow-md">
-             {label || 'Preview'}
-          </span>
-        </div>
+      {/* Container with Box Shadows on a wrapper to ensure they aren't clipped by overflow:hidden if they are drop shadows */}
+      <div style={{ filter: boxShadows.includes('inset') ? undefined : `drop-shadow(0 0 0 transparent)` }}>
+         <div style={containerStyle}>
+            {/* Fills Layer */}
+            {[...data.fills].reverse().map((fill, index) => {
+              if (!fill.visible) return null;
+              const background = fill.type === 'solid' 
+                ? (fill.value as string)
+                : (fill.type === 'gradient' ? renderGradient(fill.value as Gradient) : `url(${fill.assetUrl})`);
+              
+              return (
+                <div key={index} style={{
+                  position: 'absolute',
+                  inset: 0,
+                  background: background,
+                  backgroundSize: fill.type === 'noise' || fill.type === 'texture' ? 'auto' : 'cover',
+                  opacity: fill.opacity ?? 1,
+                  mixBlendMode: (fill.blendMode as any) || 'normal'
+                }} />
+              );
+            })}
+
+            {/* Inner Shadows Layer (needs to be on top of fills to be visible) */}
+            <div style={{
+                position: 'absolute',
+                inset: 0,
+                boxShadow: boxShadows,
+                borderRadius: borderRadius,
+                pointerEvents: 'none',
+                zIndex: 5
+            }} />
+            
+            <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+              <span className="text-white font-medium mix-blend-overlay text-lg select-none drop-shadow-md">
+                 {label || 'Preview'}
+              </span>
+            </div>
+         </div>
       </div>
       
-      <div className="absolute bottom-4 text-xs text-gray-500 font-mono">
-        {Math.round(data.width)} x {Math.round(data.height)}
+      <div className="absolute bottom-4 text-xs text-gray-500 font-mono flex gap-4">
+        <span>{Math.round(data.width)} x {Math.round(data.height)}</span>
+        {data.backdropBlur ? <span className="text-blue-400">Backdrop Blur: {data.backdropBlur}px</span> : null}
       </div>
     </div>
   );
