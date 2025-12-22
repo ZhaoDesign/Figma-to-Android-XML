@@ -54,44 +54,28 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
       const centerX = g.center?.x ?? 50;
       const centerY = g.center?.y ?? 50;
 
+      // --- 径向渐变 (Radial) 修复逻辑 ---
       if (g.type === GradientType.Radial) {
-        // --- 径向渐变预览逻辑 ---
-        let scaleY = data.height / data.width;
-        let baseRadiusPx = data.width / 2;
-
-        if (g.size && g.size.x !== 0) {
-           const horizRadius = (g.size.x / 100) * data.width;
-           const vertRadius = (g.size.y / 100) * data.height;
-           baseRadiusPx = horizRadius;
-           scaleY = vertRadius / horizRadius;
-        }
-
-        const size = baseRadiusPx * 10;
+        // 直接使用 CSS 原生的径向渐变语法，支持椭圆尺寸
+        // 语法: radial-gradient(宽度半径 高度半径 at 位置, 颜色停止点)
+        const sizeX = g.size?.x ?? 50;
+        const sizeY = g.size?.y ?? 50;
+        
+        const background = `radial-gradient(${sizeX}% ${sizeY}% at ${centerX}% ${centerY}%, ${stopsStr})`;
+        
         return (
-          <div key={index} 
-            style={{
-              position: 'absolute',
-              left: `${centerX}%`,
-              top: `${centerY}%`,
-              width: size,
-              height: size,
-              pointerEvents: 'none',
-              transform: `translate(-50%, -50%) scale(1, ${scaleY})`,
-              opacity: fill.opacity ?? 1,
-              mixBlendMode: (fill.blendMode || 'normal') as any,
-              transformOrigin: '50% 50%'
-            }}
-          >
-            <div style={{
-                width: '100%',
-                height: '100%',
-                background: `radial-gradient(circle at 50% 50%, ${stopsStr})`,
-                transformOrigin: '50% 50%'
-            }} />
-          </div>
+          <div key={index} style={{
+            position: 'absolute',
+            inset: 0,
+            background: background,
+            opacity: fill.opacity ?? 1,
+            mixBlendMode: (fill.blendMode || 'normal') as any
+          }} />
         );
-      } else if (g.type === GradientType.Angular) {
-        // --- 角度渐变预览逻辑 ---
+      } 
+      
+      // --- 角度渐变 (Angular) 保持原有正确逻辑 ---
+      if (g.type === GradientType.Angular) {
         let scaleY = (data.height / data.width);
         if (g.size && g.size.x !== 0) {
            scaleY = (g.size.y / g.size.x) * (data.height / data.width);
@@ -125,7 +109,7 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
         );
       }
 
-      // 线性渐变
+      // 线性渐变 (Linear)
       const background = `linear-gradient(${g.angle || 0}deg, ${stopsStr})`;
       return (
         <div key={index} style={{

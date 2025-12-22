@@ -70,7 +70,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
     const h = Math.round(layer.height);
     
     let xml = `<?xml version="1.0" encoding="utf-8"?>\n`;
-    xml += `<!-- Generated from Figma Advanced (Separated Matrix Mode) -->\n`;
+    xml += `<!-- Generated from Figma Advanced (Matrix Mode) -->\n`;
     xml += `<vector xmlns:android="http://schemas.android.com/apk/res/android"\n`;
     xml += `    xmlns:aapt="http://schemas.android.com/aapt"\n`;
     xml += `    android:width="${w}dp" android:height="${h}dp"\n`;
@@ -105,7 +105,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
             const centerY = (g.center?.y ?? 50) * h / 100;
             
             if (g.type === GradientType.Radial) {
-                // --- 径向渐变逻辑 (RADIAL) ---
+                // --- 径向渐变 (RADIAL) ---
                 let scaleY = h / w;
                 let baseRadius = Math.max(w, h);
                 
@@ -118,7 +118,9 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
 
                 xml += `    <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
                 xml += `           android:scaleY="${scaleY.toFixed(6)}">\n`;
-                xml += `        <path android:pathData="M${(centerX - baseRadius * 4).toFixed(1)},${(centerY - baseRadius * 4).toFixed(1)} h${(baseRadius * 8).toFixed(1)} v${(baseRadius * 8).toFixed(1)} h-${(baseRadius * 8).toFixed(1)} z">\n`;
+                // 增大覆盖矩形，防止在大缩放比例下边缘被切断
+                const fillSize = baseRadius * 8;
+                xml += `        <path android:pathData="M${(centerX - fillSize).toFixed(1)},${(centerY - fillSize).toFixed(1)} h${(fillSize * 2).toFixed(1)} v${(fillSize * 2).toFixed(1)} h-${(fillSize * 2).toFixed(1)} z">\n`;
                 xml += `            <aapt:attr name="android:fillColor">\n`;
                 xml += `                <gradient android:type="radial"\n`;
                 xml += `                          android:centerX="${centerX.toFixed(2)}" android:centerY="${centerY.toFixed(2)}"\n`;
@@ -131,7 +133,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 xml += `        </path>\n`;
                 xml += `    </group>\n`;
             } else if (g.type === GradientType.Angular) {
-                // --- 角度渐变逻辑 (ANGULAR) ---
+                // --- 角度渐变 (ANGULAR) - 保持正确逻辑 ---
                 let scaleY = h / w;
                 if (g.size && g.size.x !== 0) {
                     scaleY = (g.size.y / g.size.x) * (h / w);
@@ -157,7 +159,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 xml += `        </group>\n`;
                 xml += `    </group>\n`;
             } else {
-                // --- 线性渐变逻辑 (LINEAR) ---
+                // 线性渐变 (LINEAR)
                 xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z">\n`;
                 xml += `        <aapt:attr name="android:fillColor">\n`;
                 xml += `            <gradient android:type="linear"\n`;
