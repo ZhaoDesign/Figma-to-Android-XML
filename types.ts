@@ -6,14 +6,15 @@ export enum GradientType {
 
 export interface ColorStop {
   color: string; // rgba or hex
-  position: number; // 0 to 100
+  position: number; // 0 to 100 (can be negative or >100)
 }
 
 export interface Gradient {
   type: GradientType;
   stops: ColorStop[];
-  angle?: number; // For linear: degrees (0-360)
+  angle?: number; // For linear: degrees (0-360) used for Android Calc
   center?: { x: number; y: number }; // For radial
+  rawGeometry?: string; // The CSS string defining position/size (e.g. "180deg" or "50% 50% at 50% 50%")
 }
 
 export interface Fill {
