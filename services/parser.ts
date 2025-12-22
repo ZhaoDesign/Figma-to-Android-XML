@@ -49,41 +49,51 @@ const parseGradient = (gradientStr: string): Gradient | null => {
   let angle = 180; // Default to bottom
   let stopsStartIndex = 0;
 
-  // Check for angle or direction in the first part
-  // Valid angle formats: "180deg", "to right", "to bottom right"
-  const firstPartLower = parts[0].toLowerCase();
-  const hasAngle = firstPartLower.includes('deg') || firstPartLower.includes('to ') || firstPartLower.match(/^\d+(\.\d+)?(turn|rad|grad)$/);
+  const firstPart = parts[0];
+  const firstPartLower = firstPart.toLowerCase();
 
-  if (hasAngle) {
+  // 1. Check for Geometry / Direction definitions which are NOT color stops
+  let isGeometry = false;
+
+  if (isLinear) {
+    // Valid linear angle formats: "180deg", "to right", "to bottom right"
+    isGeometry = firstPartLower.includes('deg') || firstPartLower.includes('to ') || !!firstPartLower.match(/^\d+(\.\d+)?(turn|rad|grad)$/);
+  } else {
+    // Valid radial geometry: "circle at ...", "50% 50% at ...", "at top left"
+    // Figma usually outputs: "50% 50% at 50% 50%"
+    // We check for keywords 'at', 'circle', 'ellipse' or if it looks like coordinates followed by 'at'
+    isGeometry = firstPartLower.includes('at ') || firstPartLower.includes('circle') || firstPartLower.includes('ellipse');
+  }
+
+  if (isGeometry) {
     stopsStartIndex = 1;
-    if (firstPartLower.includes('deg')) {
-      angle = parseFloat(firstPartLower);
-    } else {
-      // Map 'to right', etc.
-      if (firstPartLower.includes('to top')) angle = 0;
-      else if (firstPartLower.includes('to right')) angle = 90;
-      else if (firstPartLower.includes('to bottom')) angle = 180;
-      else if (firstPartLower.includes('to left')) angle = 270;
-      // Corners
-      else if (firstPartLower.includes('top') && firstPartLower.includes('right')) angle = 45;
-      else if (firstPartLower.includes('bottom') && firstPartLower.includes('right')) angle = 135;
-      else if (firstPartLower.includes('bottom') && firstPartLower.includes('left')) angle = 225;
-      else if (firstPartLower.includes('top') && firstPartLower.includes('left')) angle = 315;
+    
+    if (isLinear) {
+        if (firstPartLower.includes('deg')) {
+          angle = parseFloat(firstPartLower);
+        } else {
+          // Map 'to right', etc.
+          if (firstPartLower.includes('to top')) angle = 0;
+          else if (firstPartLower.includes('to right')) angle = 90;
+          else if (firstPartLower.includes('to bottom')) angle = 180;
+          else if (firstPartLower.includes('to left')) angle = 270;
+          // Corners
+          else if (firstPartLower.includes('top') && firstPartLower.includes('right')) angle = 45;
+          else if (firstPartLower.includes('bottom') && firstPartLower.includes('right')) angle = 135;
+          else if (firstPartLower.includes('bottom') && firstPartLower.includes('left')) angle = 225;
+          else if (firstPartLower.includes('top') && firstPartLower.includes('left')) angle = 315;
+        }
     }
+    // For Radial, we currently ignore the exact position for Android XML generation 
+    // as Android <gradient> only supports simple types easily (or requires complex attributes).
+    // We stick to the default center behavior for mapping, but correctly skip the part so parsing succeeds.
   }
 
   const stops: ColorStop[] = [];
   const stopParts = parts.slice(stopsStartIndex);
   
   // Regex to capture Color and optional Position
-  // Handles: #FFF, #FFFFFF, rgba(0,0,0,1), red
-  // And: 0%, 100px (though we expect % for gradients mostly)
   stopParts.forEach((part, index) => {
-    // 1. Try to split color and position by finding the last space that isn't inside parentheses
-    // This is hard with regex alone due to nesting. 
-    // Heuristic: Color is usually at start, Position at end.
-    
-    // Updated regex to be more permissive with color formats (hex, rgb, named)
     // Matches: (color string) (spacing) (percentage/length)
     const match = part.match(/^([\s\S]+?)(?:\s+([\d.]+%?|[\d.]+px))?$/);
     
@@ -183,14 +193,9 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   }
 
   // Parse Background Color
-  // Browsers usually put the fallback color in backgroundColor.
-  // If we have gradients, we usually keep them on top.
-  // If we ONLY have color, add it.
   const hasSolidColor = bgColor && bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent' && bgColor !== 'initial';
   
   if (hasSolidColor) {
-    // If we already have gradients, the solid color is typically the "fallback" or base layer.
-    // In Figma CSS, it lists them together.
     fills.push({
       type: 'solid',
       value: bgColor,
@@ -207,12 +212,8 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
     shadowLayers.forEach(layer => {
       const isInner = layer.includes('inset');
       const cleanLayer = layer.replace('inset', '').trim();
-      
-      // Extract color. Browser standardizes to rgb/rgba first usually.
-      // Match rgba(...) or rgb(...) or #HEX
       const colorMatch = cleanLayer.match(/(rgba?\(.*?\)|#[\da-fA-F]+|[a-z]+)/i);
       const color = colorMatch ? colorMatch[0] : '#000000';
-      
       const numsStr = cleanLayer.replace(color, '').trim();
       const nums = numsStr.split(/\s+/).map(pxToNum);
       
@@ -229,12 +230,6 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   }
 
   document.body.removeChild(tempDiv);
-
-  // Fallback if nothing found
-  if (fills.length === 0 && !hasSolidColor) {
-     // If we failed to parse specific fills but width/height worked, maybe it's just white?
-     // Or maybe parsing failed. We'll return what we have.
-  }
 
   return {
     name: 'Figma Component',
