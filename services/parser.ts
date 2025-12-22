@@ -84,9 +84,6 @@ const parseGradient = (gradientStr: string): Gradient | null => {
           else if (firstPartLower.includes('top') && firstPartLower.includes('left')) angle = 315;
         }
     }
-    // For Radial, we currently ignore the exact position for Android XML generation 
-    // as Android <gradient> only supports simple types easily (or requires complex attributes).
-    // We stick to the default center behavior for mapping, but correctly skip the part so parsing succeeds.
   }
 
   const stops: ColorStop[] = [];
@@ -95,7 +92,8 @@ const parseGradient = (gradientStr: string): Gradient | null => {
   // Regex to capture Color and optional Position
   stopParts.forEach((part, index) => {
     // Matches: (color string) (spacing) (percentage/length)
-    const match = part.match(/^([\s\S]+?)(?:\s+([\d.]+%?|[\d.]+px))?$/);
+    // Updated to support negative signs: -20%
+    const match = part.match(/^([\s\S]+?)(?:\s+(-?[\d.]+%?|-?[\d.]+px))?$/);
     
     if (match) {
       let colorStr = match[1].trim();
@@ -137,11 +135,9 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   let cleanText = text.replace(/\/\*[\s\S]*?\*\//g, '');
   
   // 2. Normalize format
-  // Remove braces, replace newlines with semicolons, remove trailing commas/semicolons from values
   cleanText = cleanText.replace(/[{}]/g, '').replace(/\n/g, ';');
   
-  // 3. Smart Detection: If user pasted JUST the value (e.g. "linear-gradient(...)") without property,
-  // we prepend a property name so the browser can parse it.
+  // 3. Smart Detection
   if (!cleanText.includes(':')) {
     const trimmed = cleanText.trim();
     if (trimmed.startsWith('linear-gradient') || trimmed.startsWith('radial-gradient') || trimmed.startsWith('#') || trimmed.startsWith('rgb')) {
@@ -176,11 +172,9 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   const bgImage = style.backgroundImage;
   const bgColor = style.backgroundColor;
 
-  // Parse Background Images (Gradients)
   if (bgImage && bgImage !== 'none' && bgImage !== 'initial') {
     const layers = splitCSSLayers(bgImage);
     layers.forEach(layer => {
-      // Ignore 'url(...)' or other non-gradients for now, unless we want to map them to solid placeholders?
       const gradient = parseGradient(layer);
       if (gradient) {
         fills.push({
@@ -192,9 +186,7 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
     });
   }
 
-  // Parse Background Color
   const hasSolidColor = bgColor && bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent' && bgColor !== 'initial';
-  
   if (hasSolidColor) {
     fills.push({
       type: 'solid',
