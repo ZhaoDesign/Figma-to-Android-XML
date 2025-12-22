@@ -1,0 +1,5 @@
+{
+  "name": "Figma to Android XML Converter",
+  "description": "A developer tool to convert Figma styles (gradients, shadows, corners) directly into production-ready Android XML Drawables.",
+  "requestFramePermissions": []
+}
