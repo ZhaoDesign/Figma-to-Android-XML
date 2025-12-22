@@ -2,7 +2,9 @@ import { FigmaLayer, Fill, Gradient, GradientType, ColorStop, Shadow, Corners } 
 
 const pxToNum = (val: string): number => {
   if (!val) return 0;
-  return parseFloat(val.replace('px', '')) || 0;
+  // Handle figma unitless values often seen in some copy-paste scenarios
+  const clean = val.trim().replace('px', '');
+  return parseFloat(clean) || 0;
 };
 
 const splitCSSLayers = (cssValue: string): string[] => {
@@ -58,10 +60,11 @@ const parseGradient = (gradientStr: string): Gradient | null => {
 
   const stops: ColorStop[] = [];
   parts.slice(stopsStartIndex).forEach((part, index, arr) => {
-    const match = part.match(/^([\s\S]+?)(?:\s+(-?[\d.]+%?|-?[\d.]+px))?$/);
+    const match = part.match(/^([\s\S]+?)(?:\s+(-?[\d.]+%?|-?[\d.]+px|-?[\d.]+))?$/);
     if (match) {
       let colorStr = match[1].trim();
-      let position = match[2] ? parseFloat(match[2]) : (index / (arr.length - 1)) * 100;
+      let posVal = match[2];
+      let position = posVal ? parseFloat(posVal) : (index / (arr.length - 1)) * 100;
       stops.push({ color: colorStr, position: isNaN(position) ? 0 : position });
     }
   });
@@ -81,13 +84,11 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   const width = pxToNum(style.width) || 200;
   const height = pxToNum(style.height) || 60;
   
-  // Corners
   const radiusStr = style.borderRadius || '0px';
-  const radii = radiusStr.split(' ').map(pxToNum);
+  const radii = radiusStr.split(/\s+/).map(pxToNum);
   let corners: number | Corners = radii[0] || 0;
   if (radii.length === 4) corners = { topLeft: radii[0], topRight: radii[1], bottomRight: radii[2], bottomLeft: radii[3] };
 
-  // Fills & Images
   const fills: Fill[] = [];
   const bgImage = style.backgroundImage;
   if (bgImage && bgImage !== 'none') {
@@ -110,15 +111,16 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
     fills.push({ type: 'solid', value: bgColor, visible: true });
   }
 
-  // Shadows
   const shadows: Shadow[] = [];
   const boxShadow = style.boxShadow;
   if (boxShadow && boxShadow !== 'none') {
     splitCSSLayers(boxShadow).forEach(layer => {
       const isInner = layer.includes('inset');
-      const colorMatch = layer.match(/(rgba?\(.*?\)|#[\da-fA-F]+|[a-z]+)/i);
+      const colorMatch = layer.match(/(rgba?\(.*?\)|hsla?\(.*?\)|#[\da-fA-F]+|[a-z]+)/i);
       const color = colorMatch ? colorMatch[0] : '#000000';
-      const nums = layer.replace('inset', '').replace(color, '').trim().split(/\s+/).map(pxToNum);
+      const cleanLayer = layer.replace('inset', '').replace(color, '').trim();
+      const nums = cleanLayer.split(/\s+/).filter(v => v !== '').map(pxToNum);
+      
       shadows.push({ 
         type: isInner ? 'inner' : 'drop', 
         x: nums[0] || 0, 
@@ -131,7 +133,6 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
     });
   }
 
-  // Blurs
   const backdropFilter = style.backdropFilter || (style as any).webkitBackdropFilter;
   const filter = style.filter;
   let backdropBlur = 0, layerBlur = 0;
