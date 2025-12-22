@@ -1,3 +1,4 @@
+
 import { FigmaLayer, Fill, Gradient, GradientType, ColorStop, Shadow, Corners } from '../types';
 
 const pxToNum = (val: string): number => {
@@ -45,12 +46,12 @@ const parseGradient = (gradientStr: string): Gradient | null => {
   let angle = 0;
   let stopsStartIndex = 0;
   let center = { x: 50, y: 50 };
+  let size = { x: 100, y: 100 };
   let rawGeometry: string | undefined = undefined;
 
   const firstPart = parts[0];
   const firstPartLower = firstPart.toLowerCase();
   
-  // Logic to handle "from [angle] at [x] [y]"
   if (isConic) {
       const fromMatch = firstPartLower.match(/from\s+([\d.]+)deg/);
       if (fromMatch) {
@@ -69,10 +70,18 @@ const parseGradient = (gradientStr: string): Gradient | null => {
           stopsStartIndex = 1;
       }
   } else if (isRadial) {
-      const atMatch = firstPartLower.match(/at\s+([\d.]+)%\s+([\d.]+)%/);
-      if (atMatch) {
-          center = { x: parseFloat(atMatch[1]), y: parseFloat(atMatch[2]) };
+      // Handle size and position: radial-gradient(45.67% 50% at 54.56% 50%, ...)
+      const sizePosMatch = firstPartLower.match(/([\d.]+)%\s+([\d.]+)%\s+at\s+([\d.]+)%\s+([\d.]+)%/);
+      if (sizePosMatch) {
+          size = { x: parseFloat(sizePosMatch[1]), y: parseFloat(sizePosMatch[2]) };
+          center = { x: parseFloat(sizePosMatch[3]), y: parseFloat(sizePosMatch[4]) };
           stopsStartIndex = 1;
+      } else {
+          const atMatch = firstPartLower.match(/at\s+([\d.]+)%\s+([\d.]+)%/);
+          if (atMatch) {
+              center = { x: parseFloat(atMatch[1]), y: parseFloat(atMatch[2]) };
+              stopsStartIndex = 1;
+          }
       }
       if (lowerStr.includes('diamond') || lowerStr.includes('ellipse')) {
           type = GradientType.Diamond;
@@ -81,7 +90,6 @@ const parseGradient = (gradientStr: string): Gradient | null => {
 
   const stops: ColorStop[] = [];
   parts.slice(stopsStartIndex).forEach((part, index, arr) => {
-    // Improved regex to handle colors like rgba() and positions in % or deg
     const match = part.match(/^([\s\S]+?)(?:\s+(-?[\d.]+(?:%|px|deg|))|)$/);
     if (match) {
       let colorStr = match[1].trim();
@@ -100,7 +108,7 @@ const parseGradient = (gradientStr: string): Gradient | null => {
     }
   });
 
-  return { type, angle, center, rawGeometry, stops };
+  return { type, angle, center, size, rawGeometry, stops };
 };
 
 export const parseClipboardData = (text: string): FigmaLayer | null => {
@@ -120,40 +128,21 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   let corners: number | Corners = radii[0] || 0;
   if (radii.length === 4) corners = { topLeft: radii[0], topRight: radii[1], bottomRight: radii[2], bottomLeft: radii[3] };
 
-  const blendModes = (style.backgroundBlendMode || 'normal').split(',').map(s => s.trim());
-  const mainMixBlend = style.mixBlendMode || 'normal';
-
   const fills: Fill[] = [];
   const bgImage = style.backgroundImage;
   if (bgImage && bgImage !== 'none') {
     const layers = splitCSSLayers(bgImage);
     layers.forEach((layer, idx) => {
       const gradient = parseGradient(layer);
-      const blendMode = blendModes[idx] || (idx === 0 ? mainMixBlend : 'normal');
-      
       if (gradient) {
-        fills.push({ type: 'gradient', value: gradient, visible: true, blendMode });
-      } else if (layer.includes('url')) {
-          const urlMatch = layer.match(/url\(['"]?([^'"]+)['"]?\)/);
-          fills.push({ 
-            type: layer.toLowerCase().includes('noise') ? 'noise' : 'texture', 
-            value: 'image', 
-            assetUrl: urlMatch ? urlMatch[1] : undefined, 
-            visible: true,
-            blendMode
-          });
+        fills.push({ type: 'gradient', value: gradient, visible: true, blendMode: 'normal' });
       }
     });
   }
   
   const bgColor = style.backgroundColor;
   if (bgColor && bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
-    fills.push({ 
-        type: 'solid', 
-        value: bgColor, 
-        visible: true, 
-        blendMode: blendModes[fills.length] || 'normal' 
-    });
+    fills.push({ type: 'solid', value: bgColor, visible: true });
   }
 
   const shadows: Shadow[] = [];
@@ -178,17 +167,6 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
     });
   }
 
-  const backdropFilter = style.backdropFilter || (style as any).webkitBackdropFilter;
-  const filter = style.filter;
-  let backdropBlur = 0, layerBlur = 0;
-  
-  const extractBlur = (s: string) => {
-      const m = s.match(/blur\(([\d.]+)px\)/);
-      return m ? parseFloat(m[1]) : 0;
-  };
-  if (backdropFilter) backdropBlur = extractBlur(backdropFilter);
-  if (filter) layerBlur = extractBlur(filter);
-
   document.body.removeChild(tempDiv);
-  return { name: 'Figma Layer', width, height, corners, fills, shadows, opacity: 1, blur: layerBlur, backdropBlur };
+  return { name: 'Figma Layer', width, height, corners, fills, shadows, opacity: 1 };
 };

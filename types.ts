@@ -1,3 +1,4 @@
+
 export enum GradientType {
   Linear = 'linear',
   Radial = 'radial',
@@ -15,6 +16,7 @@ export interface Gradient {
   stops: ColorStop[];
   angle?: number;
   center?: { x: number; y: number };
+  size?: { x: number; y: number }; // Percentage values for elliptical axes
   rawGeometry?: string;
 }
 

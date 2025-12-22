@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { FigmaLayer, Gradient, GradientType } from '../types';
 
@@ -53,14 +54,27 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
       const centerX = g.center?.x ?? 50;
       const centerY = g.center?.y ?? 50;
 
-      // Logic for Elliptical Scaling (Squashing)
       const isElliptical = g.type === GradientType.Angular || g.type === GradientType.Radial;
-      const aspect = data.height / data.width;
       
       if (isElliptical) {
-        // Create a large square centered at the gradient focal point
-        // Then scale it to match the rectangle's aspect ratio
-        const size = Math.max(data.width, data.height) * 2.5;
+        // ELLIPTICAL MATRIX TRANSFORM
+        // We calculate scale factors based on the parsed CSS 'size' percentages.
+        // If not explicit, we fallback to layer aspect ratio.
+        const layerAspect = data.height / data.width;
+        
+        let scaleX = 1;
+        let scaleY = 1;
+        
+        if (g.size) {
+            // In CSS radial-gradient(width height at x y), width and height are 2*radius.
+            // But we scale a unit square, so we just care about the RATIO.
+            const ratio = (g.size.y / g.size.x) * layerAspect;
+            scaleY = ratio;
+        } else {
+            scaleY = layerAspect;
+        }
+
+        const size = Math.max(data.width, data.height) * 4; // High overflow to prevent clipping during transforms
         const angle = g.angle !== undefined ? `${g.angle}deg` : '0deg';
         
         const background = g.type === GradientType.Angular
@@ -75,7 +89,8 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
             width: size,
             height: size,
             background: background,
-            transform: `translate(-50%, -50%) scaleY(${aspect})`,
+            // Centering the unit square then applying the non-uniform scale
+            transform: `translate(-50%, -50%) scaleX(${scaleX}) scaleY(${scaleY})`,
             opacity: fill.opacity ?? 1,
             mixBlendMode: fill.blendMode || 'normal',
             pointerEvents: 'none'

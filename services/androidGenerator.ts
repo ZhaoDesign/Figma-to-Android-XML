@@ -1,3 +1,4 @@
+
 import { FigmaLayer, Fill, Gradient, GradientType, Corners, Shadow } from '../types';
 
 const toAndroidHex = (cssColor: string): string => {
@@ -69,7 +70,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
     const h = Math.round(layer.height);
     
     let xml = `<?xml version="1.0" encoding="utf-8"?>\n`;
-    xml += `<!-- Generated from Figma Advanced (Vector Mode) -->\n`;
+    xml += `<!-- Generated from Figma Advanced (Matrix Mode) -->\n`;
     xml += `<vector xmlns:android="http://schemas.android.com/apk/res/android"\n`;
     xml += `    xmlns:aapt="http://schemas.android.com/aapt"\n`;
     xml += `    android:width="${w}dp" android:height="${h}dp"\n`;
@@ -78,7 +79,6 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
     // 1. Drop Shadows
     layer.shadows.filter(s => s.type === 'drop' && s.visible).forEach((s, idx) => {
         const shadowPath = getRoundedRectPath(w + s.spread * 2, h + s.spread * 2, layer.corners);
-        xml += `    <!-- Drop Shadow ${idx + 1} -->\n`;
         xml += `    <group android:translateX="${s.x - s.spread}" android:translateY="${s.y - s.spread}">\n`;
         xml += `        <path android:pathData="${shadowPath}"\n`;
         xml += `              android:fillColor="${toAndroidHex(s.color)}"\n`;
@@ -86,11 +86,11 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
         xml += `    </group>\n`;
     });
 
-    // 2. Global Clipping (Rounded Rect)
+    // 2. Global Clipping
     const mainPath = getRoundedRectPath(w, h, layer.corners);
     xml += `    <clip-path android:pathData="${mainPath}" />\n\n`;
 
-    // 3. Fills with Matrix Transformation logic
+    // 3. Fills
     [...layer.fills].reverse().forEach((fill, idx) => {
         if (!fill.visible) return;
         
@@ -107,53 +107,51 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
             const isElliptical = g.type === GradientType.Angular || g.type === GradientType.Radial;
             
             if (isElliptical) {
-                // SQUASH LOGIC: Scale a large square around the pivot center
-                const maxDim = Math.max(w, h);
-                const scaleY = h / w;
+                // ELLIPTICAL MATRIX TRANSFORM
+                const layerAspect = h / w;
+                let scaleY = layerAspect;
                 
+                // If we parsed an explicit size axis ratio from CSS, use it
+                if (g.size) {
+                    scaleY = (g.size.y / g.size.x) * layerAspect;
+                }
+
                 xml += `    <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
                 if (g.type === GradientType.Angular) {
-                    // Android 0deg is Right, CSS 0deg is Top. Offset by -90
                     const rotation = (g.angle || 0) - 90;
                     xml += `           android:rotation="${rotation.toFixed(2)}"\n`;
                 }
                 xml += `           android:scaleY="${scaleY.toFixed(4)}">\n`;
 
-                // Fill a large enough rectangle to cover the bounds after squash
-                const fillSize = maxDim * 2.5;
-                const fillX = centerX - fillSize / 2;
-                const fillY = centerY - fillSize / 2;
+                const maxDim = Math.max(w, h) * 4;
+                const fillX = centerX - maxDim / 2;
+                const fillY = centerY - maxDim / 2;
 
-                xml += `        <path android:pathData="M${fillX.toFixed(1)},${fillY.toFixed(1)} h${fillSize.toFixed(1)} v${fillSize.toFixed(1)} h-${fillSize.toFixed(1)} z">\n`;
+                xml += `        <path android:pathData="M${fillX.toFixed(1)},${fillY.toFixed(1)} h${maxDim.toFixed(1)} v${maxDim.toFixed(1)} h-${maxDim.toFixed(1)} z">\n`;
                 xml += `            <aapt:attr name="android:fillColor">\n`;
                 xml += `                <gradient android:type="${g.type === GradientType.Angular ? 'sweep' : 'radial'}"\n`;
                 xml += `                          android:centerX="${centerX.toFixed(2)}"\n`;
                 xml += `                          android:centerY="${centerY.toFixed(2)}"\n`;
                 
                 if (g.type === GradientType.Radial) {
-                    const radius = maxDim / 2;
+                    // Radius is calibrated to the viewport before scaling
+                    const radius = Math.max(w, h) / 2;
                     xml += `                          android:gradientRadius="${radius.toFixed(1)}"\n`;
                 }
 
-                if (g.stops.length > 2) {
-                    g.stops.sort((a,b) => a.position - b.position).forEach(stop => {
-                        xml += `                    <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
-                    });
-                } else {
-                    xml += `                          android:startColor="${toAndroidHex(g.stops[0].color)}"\n`;
-                    xml += `                          android:endColor="${toAndroidHex(g.stops[g.stops.length-1].color)}" />\n`;
-                }
+                g.stops.sort((a,b) => a.position - b.position).forEach(stop => {
+                    xml += `                    <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
+                });
                 
-                if (g.stops.length > 2) xml += `                </gradient>\n`;
+                xml += `                </gradient>\n`;
                 xml += `            </aapt:attr>\n`;
                 xml += `        </path>\n`;
                 xml += `    </group>\n`;
             } else {
-                // Standard Linear Gradient
+                // Standard Linear
                 xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z">\n`;
                 xml += `        <aapt:attr name="android:fillColor">\n`;
                 xml += `            <gradient android:type="linear"\n`;
-                // Calculate start/end points based on angle
                 const rad = ((g.angle || 180) - 90) * Math.PI / 180;
                 const length = Math.sqrt(w*w + h*h);
                 const x1 = centerX - (Math.cos(rad) * length / 2);
@@ -163,7 +161,6 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
 
                 xml += `                      android:startX="${x1.toFixed(2)}" android:startY="${y1.toFixed(2)}"\n`;
                 xml += `                      android:endX="${x2.toFixed(2)}" android:endY="${y2.toFixed(2)}">\n`;
-                
                 g.stops.sort((a,b) => a.position - b.position).forEach(stop => {
                     xml += `                <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
                 });
@@ -172,18 +169,6 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 xml += `    </path>\n`;
             }
         }
-    });
-
-    // 4. Inner Shadows (Approximated)
-    layer.shadows.filter(s => s.type === 'inner' && s.visible).forEach((s, idx) => {
-        const strokeWidth = s.blur > 0 ? s.blur * 2 : 2;
-        xml += `\n    <!-- Inner Shadow ${idx + 1} Approximation -->\n`;
-        xml += `    <path android:pathData="${mainPath}"\n`;
-        xml += `          android:fillColor="#00000000"\n`; 
-        xml += `          android:strokeWidth="${strokeWidth}"\n`;
-        xml += `          android:strokeColor="${toAndroidHex(s.color)}"\n`;
-        xml += `          android:translateX="${s.x}"\n`;
-        xml += `          android:translateY="${s.y}" />\n`;
     });
 
     xml += `\n</vector>`;
