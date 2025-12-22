@@ -105,38 +105,60 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
             if (g.type === GradientType.Radial || g.type === GradientType.Diamond) androidType = 'radial';
             if (g.type === GradientType.Angular) androidType = 'sweep';
 
+            const maxDim = Math.max(w, h);
             const isElliptical = w !== h;
-            const needsScaling = (g.type === GradientType.Radial || g.type === GradientType.Angular || g.type === GradientType.Diamond) && isElliptical;
-            const rotation = g.type === GradientType.Angular ? (g.angle || 0) : 0;
             const centerX = (g.center?.x ?? 50) * w / 100;
             const centerY = (g.center?.y ?? 50) * h / 100;
 
-            // Group for rotation or scaling
-            if (needsScaling || rotation !== 0) {
-                const scaleY = h / w;
-                xml += `    <group android:pivotX="${centerX}" android:pivotY="${centerY}"\n`;
-                if (rotation !== 0) xml += `           android:rotation="${rotation}"\n`;
-                if (needsScaling) xml += `           android:scaleY="${scaleY.toFixed(3)}"\n`;
-                xml += `    >\n`;
+            // Group for rotation and elliptical scaling
+            xml += `    <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
+            
+            if (g.type === GradientType.Angular) {
+                // CSS 0deg is top (12 o'clock), Android 0deg is right (3 o'clock)
+                // Offset by -90 to align
+                const rotation = (g.angle || 0) - 90;
+                xml += `           android:rotation="${rotation.toFixed(2)}"\n`;
             }
+            
+            if (isElliptical && (g.type === GradientType.Angular || g.type === GradientType.Radial || g.type === GradientType.Diamond)) {
+                if (w > h) {
+                    xml += `           android:scaleY="${(h / w).toFixed(3)}"\n`;
+                } else {
+                    xml += `           android:scaleX="${(w / h).toFixed(3)}"\n`;
+                }
+            }
+            xml += `    >\n`;
 
-            xml += `        <path android:pathData="M0,0 h${w} v${h} h-${w} z">\n`;
+            // For scaling to work correctly, the path filling must cover the bounds
+            // We use a large enough square for sweep gradients to avoid clipping issues during scale
+            const fillDim = maxDim * 2;
+            const fillOffset = -maxDim / 2;
+            
+            xml += `        <path android:pathData="M${fillOffset},${fillOffset} h${fillDim} v${fillDim} h-${fillDim} z">\n`;
             xml += `            <aapt:attr name="android:fillColor">\n`;
             xml += `                <gradient android:type="${androidType}"\n`;
             xml += `                          android:centerX="${centerX.toFixed(2)}"\n`;
             xml += `                          android:centerY="${centerY.toFixed(2)}"\n`;
+            
             if (g.type === GradientType.Radial || g.type === GradientType.Diamond) {
-                const radius = Math.max(w, h) / 2;
+                const radius = maxDim / 2;
                 xml += `                          android:gradientRadius="${radius.toFixed(1)}"\n`;
             }
-            xml += `                          android:startColor="${toAndroidHex(g.stops[0].color)}"\n`;
-            xml += `                          android:endColor="${toAndroidHex(g.stops[g.stops.length-1].color)}" />\n`;
+            
+            // Map multi-stop gradients
+            if (g.stops.length > 2) {
+                g.stops.sort((a,b) => a.position - b.position).forEach(stop => {
+                    xml += `                    <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(3)}" />\n`;
+                });
+            } else {
+                xml += `                          android:startColor="${toAndroidHex(g.stops[0].color)}"\n`;
+                xml += `                          android:endColor="${toAndroidHex(g.stops[g.stops.length-1].color)}" />\n`;
+            }
+            
+            if (g.stops.length > 2) xml += `                </gradient>\n`;
             xml += `            </aapt:attr>\n`;
             xml += `        </path>\n`;
-
-            if (needsScaling || rotation !== 0) {
-                xml += `    </group>\n`;
-            }
+            xml += `    </group>\n`;
         }
     });
 

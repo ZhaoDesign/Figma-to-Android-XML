@@ -16,6 +16,7 @@ const renderGradient = (g: Gradient): string => {
   const centerY = g.center?.y ?? 50;
 
   if (g.type === GradientType.Angular) {
+      // For basic background fallback if scaling isn't used
       const angle = g.angle !== undefined ? `${g.angle}deg` : '0deg';
       return `conic-gradient(from ${angle} at ${centerX}% ${centerY}%, ${stopsStr})`;
   }
@@ -31,7 +32,6 @@ const renderGradient = (g: Gradient): string => {
     
   if (g.type === GradientType.Linear) return `linear-gradient(${g.angle || 180}deg, ${stopsStr})`;
   
-  // Custom center for Radial
   return `radial-gradient(circle at ${centerX}% ${centerY}%, ${stopsStr})`;
 };
 
@@ -82,6 +82,38 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
 
             {[...data.fills].reverse().map((fill, index) => {
               if (!fill.visible) return null;
+              
+              const isAngular = fill.type === 'gradient' && (fill.value as Gradient).type === GradientType.Angular;
+              
+              if (isAngular) {
+                  const g = fill.value as Gradient;
+                  const maxDim = Math.max(data.width, data.height);
+                  const scaleY = data.height / maxDim;
+                  const scaleX = data.width / maxDim;
+                  const stopsStr = g.stops
+                    .sort((a, b) => a.position - b.position)
+                    .map(s => `${s.color} ${s.position}%`)
+                    .join(', ');
+                  const angle = g.angle !== undefined ? `${g.angle}deg` : '0deg';
+                  const centerX = g.center?.x ?? 50;
+                  const centerY = g.center?.y ?? 50;
+
+                  return (
+                    <div key={index} style={{
+                        position: 'absolute',
+                        top: '50%',
+                        left: '50%',
+                        width: maxDim,
+                        height: maxDim,
+                        // Move to center, apply scale to squash, then handle the relative position
+                        transform: `translate(-50%, -50%) scale(${scaleX}, ${scaleY})`,
+                        background: `conic-gradient(from ${angle} at ${centerX}% ${centerY}%, ${stopsStr})`,
+                        opacity: fill.opacity ?? 1,
+                        mixBlendMode: (fill.blendMode as any) || 'normal'
+                    }} />
+                  );
+              }
+
               const background = fill.type === 'solid' 
                 ? (fill.value as string)
                 : (fill.type === 'gradient' ? renderGradient(fill.value as Gradient) : `url(${fill.assetUrl})`);
