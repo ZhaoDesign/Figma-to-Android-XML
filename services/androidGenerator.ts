@@ -1,4 +1,3 @@
-
 import { FigmaLayer, Fill, Gradient, GradientType, Corners, Shadow } from '../types';
 
 const toAndroidHex = (cssColor: string): string => {
@@ -76,7 +75,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
     xml += `    android:width="${w}dp" android:height="${h}dp"\n`;
     xml += `    android:viewportWidth="${w}" android:viewportHeight="${h}">\n\n`;
 
-    // 1. Drop Shadows
+    // Shadows
     layer.shadows.filter(s => s.type === 'drop' && s.visible).forEach((s, idx) => {
         const shadowPath = getRoundedRectPath(w + s.spread * 2, h + s.spread * 2, layer.corners);
         xml += `    <group android:translateX="${s.x - s.spread}" android:translateY="${s.y - s.spread}">\n`;
@@ -86,11 +85,11 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
         xml += `    </group>\n`;
     });
 
-    // 2. Global Clipping
+    // Global Clipping
     const mainPath = getRoundedRectPath(w, h, layer.corners);
     xml += `    <clip-path android:pathData="${mainPath}" />\n\n`;
 
-    // 3. Fills
+    // Fills
     [...layer.fills].reverse().forEach((fill, idx) => {
         if (!fill.visible) return;
         
@@ -111,13 +110,13 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 const layerAspect = h / w;
                 let scaleY = layerAspect;
                 
-                // If we parsed an explicit size axis ratio from CSS, use it
-                if (g.size) {
+                if (g.size && g.size.x !== 0) {
                     scaleY = (g.size.y / g.size.x) * layerAspect;
                 }
 
                 xml += `    <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
                 if (g.type === GradientType.Angular) {
+                    // CSS starts at Top (0deg), Android Sweep starts at Right (90deg). Adjust by -90.
                     const rotation = (g.angle || 0) - 90;
                     xml += `           android:rotation="${rotation.toFixed(2)}"\n`;
                 }
@@ -134,7 +133,6 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 xml += `                          android:centerY="${centerY.toFixed(2)}"\n`;
                 
                 if (g.type === GradientType.Radial) {
-                    // Radius is calibrated to the viewport before scaling
                     const radius = Math.max(w, h) / 2;
                     xml += `                          android:gradientRadius="${radius.toFixed(1)}"\n`;
                 }
@@ -152,7 +150,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z">\n`;
                 xml += `        <aapt:attr name="android:fillColor">\n`;
                 xml += `            <gradient android:type="linear"\n`;
-                const rad = ((g.angle || 180) - 90) * Math.PI / 180;
+                const rad = ((g.angle || 0) - 90) * Math.PI / 180;
                 const length = Math.sqrt(w*w + h*h);
                 const x1 = centerX - (Math.cos(rad) * length / 2);
                 const y1 = centerY - (Math.sin(rad) * length / 2);

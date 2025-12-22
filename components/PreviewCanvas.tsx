@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { FigmaLayer, Gradient, GradientType } from '../types';
 
@@ -7,10 +6,6 @@ interface Props {
   label?: string;
 }
 
-/**
- * PreviewCanvas component renders a visual representation of the Figma layer
- * using CSS properties.
- */
 export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
   const dropShadows = data.shadows
     .filter(s => s.visible && s.type === 'drop')
@@ -33,7 +28,6 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
     boxShadow: dropShadows, 
   };
 
-  // Helper to render individual fill layers
   const renderFill = (fill: any, index: number) => {
     if (!fill.visible) return null;
 
@@ -59,22 +53,46 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
       const centerX = g.center?.x ?? 50;
       const centerY = g.center?.y ?? 50;
 
-      let background = '';
-      if (g.type === GradientType.Linear) {
-        background = `linear-gradient(${g.angle || 0}deg, ${stopsStr})`;
-      } else if (g.type === GradientType.Radial) {
-        // CSS radial-gradient supports elliptical shapes
-        const sizeX = g.size?.x ?? 50;
-        const sizeY = g.size?.y ?? 50;
-        background = `radial-gradient(${sizeX}% ${sizeY}% at ${centerX}% ${centerY}%, ${stopsStr})`;
-      } else if (g.type === GradientType.Angular) {
-        // Conic gradient for angular/sweep
-        background = `conic-gradient(from ${(g.angle || 0)}deg at ${centerX}% ${centerY}%, ${stopsStr})`;
-      } else if (g.type === GradientType.Diamond) {
-        // Approximating diamond with a sharp radial gradient for preview
-        background = `radial-gradient(circle at ${centerX}% ${centerY}%, ${stopsStr})`;
+      // Logic for Elliptical Scaling (Squashing)
+      // If width != height, standard circular gradients won't match Figma
+      const isElliptical = g.type === GradientType.Angular || g.type === GradientType.Radial;
+      
+      if (isElliptical) {
+        const layerAspect = data.height / data.width;
+        let scaleY = layerAspect;
+        
+        // If we have explicit size data from CSS (e.g., 47.6% 50%)
+        if (g.size && g.size.x !== 0) {
+          scaleY = (g.size.y / g.size.x) * layerAspect;
+        }
+
+        // Create a large square centered at the gradient focal point
+        const size = Math.max(data.width, data.height) * 4;
+        const angle = g.angle !== undefined ? `${g.angle}deg` : '0deg';
+        
+        const background = g.type === GradientType.Angular
+          ? `conic-gradient(from ${angle} at 50% 50%, ${stopsStr})`
+          : `radial-gradient(circle at 50% 50%, ${stopsStr})`;
+
+        return (
+          <div key={index} style={{
+            position: 'absolute',
+            left: `${centerX}%`,
+            top: `${centerY}%`,
+            width: size,
+            height: size,
+            background: background,
+            // Non-uniform scaling squashes the circular sweep/radial into an ellipse
+            transform: `translate(-50%, -50%) scaleY(${scaleY})`,
+            opacity: fill.opacity ?? 1,
+            mixBlendMode: (fill.blendMode || 'normal') as any,
+            pointerEvents: 'none'
+          }} />
+        );
       }
 
+      // Linear Gradient (standard)
+      const background = `linear-gradient(${g.angle || 0}deg, ${stopsStr})`;
       return (
         <div key={index} style={{
           position: 'absolute',
@@ -89,16 +107,26 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
     return null;
   };
 
-  // Ensure the component returns a ReactNode to fix the "Type 'void' is not assignable to type 'ReactNode'" error
   return (
-    <div className="flex flex-col items-center justify-center p-12 bg-gray-900/50 rounded-2xl border border-dashed border-gray-700 min-h-[400px]">
-      <div style={containerStyle}>
-        {data.fills.map((fill, i) => renderFill(fill, i))}
-        {label && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <span className="text-white/10 font-bold text-3xl uppercase tracking-widest">{label}</span>
-          </div>
-        )}
+    <div className="w-full h-full min-h-[400px] flex flex-col items-center justify-center bg-gray-900 relative overflow-hidden border border-gray-750 rounded-xl">
+      <div className="absolute inset-0 opacity-10 pointer-events-none" 
+           style={{ backgroundImage: 'radial-gradient(#475569 1px, transparent 1px)', backgroundSize: '20px 20px' }}>
+      </div>
+      
+      <div className="relative">
+         <div style={containerStyle}>
+            {[...data.fills].reverse().map((fill, index) => renderFill(fill, index))}
+            
+            <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
+              <span className="text-white font-semibold mix-blend-difference text-lg select-none">
+                 {label || 'Preview'}
+              </span>
+            </div>
+         </div>
+      </div>
+      
+      <div className="absolute bottom-4 text-xs text-gray-500 font-mono flex flex-wrap justify-center gap-x-4 gap-y-1 px-4">
+        <span>Size: {Math.round(data.width)}×{Math.round(data.height)}</span>
       </div>
     </div>
   );
