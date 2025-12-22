@@ -1,4 +1,4 @@
-import { FigmaLayer, Fill, Gradient, GradientType, ColorStop, Corners, Shadow } from '../types';
+import { FigmaLayer, Fill, Gradient, GradientType, Corners, Shadow } from '../types';
 
 const toAndroidHex = (cssColor: string): string => {
   const getRgba = (c: string) => {
@@ -67,6 +67,7 @@ const getRoundedRectPath = (w: number, h: number, corners: Corners | number, ins
 export const generateAndroidXML = (layer: FigmaLayer): string => {
     const w = Math.round(layer.width);
     const h = Math.round(layer.height);
+    const isElliptical = w !== h;
     
     let xml = `<?xml version="1.0" encoding="utf-8"?>\n`;
     xml += `<!-- Generated from Figma Advanced (Vector Mode) -->\n`;
@@ -95,12 +96,9 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
         if (!fill.visible) return;
         
         xml += `    <!-- Fill ${idx + 1}: ${fill.type.toUpperCase()} (Blend: ${fill.blendMode || 'normal'}) -->\n`;
-        if (fill.blendMode && fill.blendMode !== 'normal') {
-            xml += `    <!-- Note: '${fill.blendMode}' blend mode not natively supported in VectorDrawable path fills. -->\n`;
-        }
 
-        xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z"\n`;
         if (fill.type === 'solid') {
+            xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z"\n`;
             xml += `          android:fillColor="${toAndroidHex(fill.value as string)}" />\n`;
         } else if (fill.type === 'gradient') {
             const g = fill.value as Gradient;
@@ -108,16 +106,31 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
             if (g.type === GradientType.Radial || g.type === GradientType.Diamond) androidType = 'radial';
             if (g.type === GradientType.Angular) androidType = 'sweep';
 
-            xml += `          >\n`;
-            if (g.type === GradientType.Diamond) {
-                xml += `        <!-- Diamond Gradient approximated as Radial -->\n`;
+            const needsScaling = (g.type === GradientType.Radial || g.type === GradientType.Angular || g.type === GradientType.Diamond) && isElliptical;
+
+            if (needsScaling) {
+                const scaleY = h / w;
+                const translateY = (h - (h * scaleY)) / 2; // Approximation to center scaled gradient
+                xml += `    <group android:scaleY="${scaleY.toFixed(3)}" android:translateY="${translateY.toFixed(3)}">\n`;
             }
-            xml += `        <aapt:attr name="android:fillColor">\n`;
-            xml += `            <gradient android:type="${androidType}"\n`;
-            xml += `                      android:startColor="${toAndroidHex(g.stops[0].color)}"\n`;
-            xml += `                      android:endColor="${toAndroidHex(g.stops[g.stops.length-1].color)}" />\n`;
-            xml += `        </aapt:attr>\n`;
-            xml += `    </path>\n`;
+
+            xml += `        <path android:pathData="M0,0 h${w} v${h} h-${w} z">\n`;
+            xml += `            <aapt:attr name="android:fillColor">\n`;
+            xml += `                <gradient android:type="${androidType}"\n`;
+            if (g.type === GradientType.Radial || g.type === GradientType.Diamond) {
+                const radius = Math.max(w, h) / 2;
+                xml += `                          android:centerX="${w / 2}"\n`;
+                xml += `                          android:centerY="${h / 2}"\n`;
+                xml += `                          android:gradientRadius="${radius.toFixed(1)}"\n`;
+            }
+            xml += `                          android:startColor="${toAndroidHex(g.stops[0].color)}"\n`;
+            xml += `                          android:endColor="${toAndroidHex(g.stops[g.stops.length-1].color)}" />\n`;
+            xml += `            </aapt:attr>\n`;
+            xml += `        </path>\n`;
+
+            if (needsScaling) {
+                xml += `    </group>\n`;
+            }
         }
     });
 

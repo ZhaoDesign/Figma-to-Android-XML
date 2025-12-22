@@ -50,7 +50,7 @@ const parseGradient = (gradientStr: string): Gradient | null => {
   const firstPartLower = firstPart.toLowerCase();
   
   const keywords = ['circle', 'ellipse', 'at', 'center', 'top', 'bottom', 'left', 'right', 'deg', 'to ', 'from '];
-  const isGeometry = keywords.some(k => firstPartLower.includes(k) || /[\d.]+%/.test(k));
+  const isGeometry = keywords.some(k => firstPartLower.includes(k) || /[\d.]+%/.test(firstPartLower));
 
   if (isGeometry) {
     stopsStartIndex = 1;
@@ -62,8 +62,8 @@ const parseGradient = (gradientStr: string): Gradient | null => {
         const match = firstPartLower.match(/from\s+([\d.]+)deg/);
         if (match) angle = parseFloat(match[1]);
     }
-    // Figma Diamond Detection: often radial-gradient with non-standard geometry or keywords
-    if (isRadial && (lowerStr.includes('diamond') || firstPartLower.includes('50% 50%'))) {
+    // Figma Diamond Detection: often radial-gradient with non-standard geometry or keywords like ellipse
+    if (isRadial && (lowerStr.includes('diamond') || lowerStr.includes('ellipse'))) {
        type = GradientType.Diamond;
     }
   }
@@ -81,7 +81,7 @@ const parseGradient = (gradientStr: string): Gradient | null => {
           else if (posVal.includes('deg')) position = (parseFloat(posVal) / 360) * 100;
           else position = parseFloat(posVal);
       } else {
-          position = (index / (arr.length - 1)) * 100;
+          position = arr.length > 1 ? (index / (arr.length - 1)) * 100 : 0;
       }
       
       stops.push({ color: colorStr, position: isNaN(position) ? 0 : position });
@@ -96,7 +96,6 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   tempDiv.style.display = 'none';
   document.body.appendChild(tempDiv);
 
-  // Preserve comments for diamond detection hints
   const cleanText = text.replace(/[{}]/g, '').replace(/\n/g, ' ');
   tempDiv.setAttribute('style', cleanText);
   const style = tempDiv.style;
@@ -109,7 +108,6 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   let corners: number | Corners = radii[0] || 0;
   if (radii.length === 4) corners = { topLeft: radii[0], topRight: radii[1], bottomRight: radii[2], bottomLeft: radii[3] };
 
-  // Parse Blend Modes
   const blendModes = (style.backgroundBlendMode || 'normal').split(',').map(s => s.trim());
   const mainMixBlend = style.mixBlendMode || 'normal';
 

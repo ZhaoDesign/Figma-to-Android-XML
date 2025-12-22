@@ -14,11 +14,12 @@ const renderGradient = (g: Gradient): string => {
 
   if (g.type === GradientType.Angular) {
       const angle = g.angle !== undefined ? `${g.angle}deg` : '0deg';
+      // Conic gradients naturally follow the container aspect ratio if not forced to circle
       return `conic-gradient(from ${angle} at 50% 50%, ${stopsStr})`;
   }
 
   if (g.type === GradientType.Diamond) {
-      // CSS approximation of diamond: specialized radial
+      // Diamond is best approximated by an elliptical radial gradient in CSS
       return `radial-gradient(ellipse at 50% 50%, ${stopsStr})`;
   }
 
@@ -28,6 +29,7 @@ const renderGradient = (g: Gradient): string => {
   }
     
   if (g.type === GradientType.Linear) return `linear-gradient(${g.angle || 180}deg, ${stopsStr})`;
+  // Circular radial
   return `radial-gradient(circle at 50% 50%, ${stopsStr})`;
 };
 
