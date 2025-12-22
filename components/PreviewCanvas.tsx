@@ -6,40 +6,7 @@ interface Props {
   label?: string;
 }
 
-const renderGradient = (g: Gradient): string => {
-  const stopsStr = g.stops
-    .sort((a, b) => a.position - b.position)
-    .map(s => `${s.color} ${s.position}%`)
-    .join(', ');
-
-  const centerX = g.center?.x ?? 50;
-  const centerY = g.center?.y ?? 50;
-
-  if (g.type === GradientType.Angular) {
-      const angle = g.angle !== undefined ? `${g.angle}deg` : '0deg';
-      return `conic-gradient(from ${angle} at ${centerX}% ${centerY}%, ${stopsStr})`;
-  }
-
-  if (g.type === GradientType.Diamond) {
-      return `radial-gradient(ellipse at ${centerX}% ${centerY}%, ${stopsStr})`;
-  }
-
-  if (g.rawGeometry) {
-    if (g.type === GradientType.Linear) return `linear-gradient(${g.rawGeometry}, ${stopsStr})`;
-    return `radial-gradient(${g.rawGeometry}, ${stopsStr})`;
-  }
-    
-  if (g.type === GradientType.Linear) return `linear-gradient(${g.angle || 180}deg, ${stopsStr})`;
-  
-  return `radial-gradient(circle at ${centerX}% ${centerY}%, ${stopsStr})`;
-};
-
 export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
-  const innerShadows = data.shadows
-    .filter(s => s.visible && s.type === 'inner')
-    .map(s => `inset ${s.x}px ${s.y}px ${s.blur}px ${s.spread}px ${s.color}`)
-    .join(', ');
-
   const dropShadows = data.shadows
     .filter(s => s.visible && s.type === 'drop')
     .map(s => `${s.x}px ${s.y}px ${s.blur}px ${s.spread}px ${s.color}`)
@@ -61,6 +28,82 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
     boxShadow: dropShadows, 
   };
 
+  const renderFill = (fill: any, index: number) => {
+    if (!fill.visible) return null;
+
+    if (fill.type === 'solid') {
+      return (
+        <div key={index} style={{
+          position: 'absolute',
+          inset: 0,
+          background: fill.value,
+          opacity: fill.opacity ?? 1,
+          mixBlendMode: fill.blendMode || 'normal'
+        }} />
+      );
+    }
+
+    if (fill.type === 'gradient') {
+      const g = fill.value as Gradient;
+      const stopsStr = g.stops
+        .sort((a, b) => a.position - b.position)
+        .map(s => `${s.color} ${s.position}%`)
+        .join(', ');
+
+      const centerX = g.center?.x ?? 50;
+      const centerY = g.center?.y ?? 50;
+
+      // Logic for Elliptical Scaling (Squashing)
+      const isElliptical = g.type === GradientType.Angular || g.type === GradientType.Radial;
+      const aspect = data.height / data.width;
+      
+      if (isElliptical) {
+        // Create a large square centered at the gradient focal point
+        // Then scale it to match the rectangle's aspect ratio
+        const size = Math.max(data.width, data.height) * 2.5;
+        const angle = g.angle !== undefined ? `${g.angle}deg` : '0deg';
+        
+        const background = g.type === GradientType.Angular
+          ? `conic-gradient(from ${angle} at 50% 50%, ${stopsStr})`
+          : `radial-gradient(circle at 50% 50%, ${stopsStr})`;
+
+        return (
+          <div key={index} style={{
+            position: 'absolute',
+            left: `${centerX}%`,
+            top: `${centerY}%`,
+            width: size,
+            height: size,
+            background: background,
+            transform: `translate(-50%, -50%) scaleY(${aspect})`,
+            opacity: fill.opacity ?? 1,
+            mixBlendMode: fill.blendMode || 'normal',
+            pointerEvents: 'none'
+          }} />
+        );
+      }
+
+      // Linear Gradient (standard)
+      const background = `linear-gradient(${g.angle || 180}deg, ${stopsStr})`;
+      return (
+        <div key={index} style={{
+          position: 'absolute',
+          inset: 0,
+          background: background,
+          opacity: fill.opacity ?? 1,
+          mixBlendMode: fill.blendMode || 'normal'
+        }} />
+      );
+    }
+
+    return null;
+  };
+
+  const innerShadows = data.shadows
+    .filter(s => s.visible && s.type === 'inner')
+    .map(s => `inset ${s.x}px ${s.y}px ${s.blur}px ${s.spread}px ${s.color}`)
+    .join(', ');
+
   return (
     <div className="w-full h-full min-h-[400px] flex flex-col items-center justify-center bg-gray-900 relative overflow-hidden border border-gray-750 rounded-xl">
       <div className="absolute inset-0 opacity-10 pointer-events-none" 
@@ -79,62 +122,7 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
               }} />
             ) : null}
 
-            {[...data.fills].reverse().map((fill, index) => {
-              if (!fill.visible) return null;
-              
-              const isAngular = fill.type === 'gradient' && (fill.value as Gradient).type === GradientType.Angular;
-              
-              if (isAngular) {
-                  const g = fill.value as Gradient;
-                  // To create the "squashed" ellipse effect:
-                  // 1. Create a large square background that encompasses the furthest corner
-                  // 2. Scale it non-uniformly to match the aspect ratio of the layer
-                  const maxDim = Math.max(data.width, data.height) * 2;
-                  const scaleY = data.height / data.width; 
-                  
-                  const stopsStr = g.stops
-                    .sort((a, b) => a.position - b.position)
-                    .map(s => `${s.color} ${s.position}%`)
-                    .join(', ');
-                  const angle = g.angle !== undefined ? `${g.angle}deg` : '0deg';
-                  const centerX = g.center?.x ?? 50;
-                  const centerY = g.center?.y ?? 50;
-
-                  return (
-                    <div key={index} style={{
-                        position: 'absolute',
-                        // We align the square's center with the calculated gradient center in the layer
-                        left: `${centerX}%`,
-                        top: `${centerY}%`,
-                        width: maxDim,
-                        height: maxDim,
-                        // CSS conic-gradient center is relative to the element itself, 
-                        // so we center it at 50% 50% of the square
-                        background: `conic-gradient(from ${angle} at 50% 50%, ${stopsStr})`,
-                        // transform: center the square on the coordinate, then scale Y to squash it
-                        transform: `translate(-50%, -50%) scaleY(${scaleY})`,
-                        opacity: fill.opacity ?? 1,
-                        mixBlendMode: (fill.blendMode as any) || 'normal',
-                        pointerEvents: 'none'
-                    }} />
-                  );
-              }
-
-              const background = fill.type === 'solid' 
-                ? (fill.value as string)
-                : (fill.type === 'gradient' ? renderGradient(fill.value as Gradient) : `url(${fill.assetUrl})`);
-              
-              return (
-                <div key={index} style={{
-                  position: 'absolute',
-                  inset: 0,
-                  background: background,
-                  backgroundSize: fill.type === 'noise' || fill.type === 'texture' ? 'auto' : 'cover',
-                  opacity: fill.opacity ?? 1,
-                  mixBlendMode: (fill.blendMode as any) || 'normal'
-                }} />
-              );
-            })}
+            {[...data.fills].reverse().map((fill, index) => renderFill(fill, index))}
 
             {innerShadows && (
               <div style={{
