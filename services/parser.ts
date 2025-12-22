@@ -1,22 +1,14 @@
 import { FigmaLayer, Fill, Gradient, GradientType, ColorStop, Shadow, Corners } from '../types';
 
-// Helper to parse rgba/rgb to hex
-const rgbToHex = (color: string): string => {
-  if (color.startsWith('#')) return color;
-  
-  const ctx = document.createElement('canvas').getContext('2d');
-  if (!ctx) return '#000000';
-  ctx.fillStyle = color;
-  return ctx.fillStyle;
-};
-
 // Helper to extract numeric value from px string
 const pxToNum = (val: string): number => {
+  if (!val) return 0;
   return parseFloat(val.replace('px', '')) || 0;
 };
 
-// Robust CSS function splitter that handles nested parentheses (e.g. rgba inside linear-gradient)
+// Robust CSS function splitter that handles nested parentheses
 const splitCSSLayers = (cssValue: string): string[] => {
+  if (!cssValue) return [];
   const layers: string[] = [];
   let current = '';
   let depth = 0;
@@ -38,52 +30,78 @@ const splitCSSLayers = (cssValue: string): string[] => {
 };
 
 const parseGradient = (gradientStr: string): Gradient | null => {
-  const isLinear = gradientStr.includes('linear-gradient');
-  const isRadial = gradientStr.includes('radial-gradient');
+  const lowerStr = gradientStr.toLowerCase();
+  const isLinear = lowerStr.includes('linear-gradient');
+  const isRadial = lowerStr.includes('radial-gradient');
   
   if (!isLinear && !isRadial) return null;
 
-  // Remove function wrapper
-  const content = gradientStr.substring(gradientStr.indexOf('(') + 1, gradientStr.lastIndexOf(')'));
+  // Remove function wrapper: linear-gradient(...) -> ...
+  const firstParen = gradientStr.indexOf('(');
+  const lastParen = gradientStr.lastIndexOf(')');
+  if (firstParen === -1 || lastParen === -1) return null;
+
+  const content = gradientStr.substring(firstParen + 1, lastParen);
   const parts = splitCSSLayers(content);
   
+  if (parts.length === 0) return null;
+
   let angle = 180; // Default to bottom
   let stopsStartIndex = 0;
 
   // Check for angle or direction in the first part
-  if (isLinear && (parts[0].includes('deg') || parts[0].includes('to '))) {
+  // Valid angle formats: "180deg", "to right", "to bottom right"
+  const firstPartLower = parts[0].toLowerCase();
+  const hasAngle = firstPartLower.includes('deg') || firstPartLower.includes('to ') || firstPartLower.match(/^\d+(\.\d+)?(turn|rad|grad)$/);
+
+  if (hasAngle) {
     stopsStartIndex = 1;
-    if (parts[0].includes('deg')) {
-      angle = parseFloat(parts[0]);
+    if (firstPartLower.includes('deg')) {
+      angle = parseFloat(firstPartLower);
     } else {
       // Map 'to right', etc.
-      if (parts[0].includes('to top')) angle = 0;
-      else if (parts[0].includes('to right')) angle = 90;
-      else if (parts[0].includes('to bottom')) angle = 180;
-      else if (parts[0].includes('to left')) angle = 270;
-      // Combinations like 'to bottom right' are approx 135
-      if (parts[0].includes('bottom') && parts[0].includes('right')) angle = 135;
+      if (firstPartLower.includes('to top')) angle = 0;
+      else if (firstPartLower.includes('to right')) angle = 90;
+      else if (firstPartLower.includes('to bottom')) angle = 180;
+      else if (firstPartLower.includes('to left')) angle = 270;
+      // Corners
+      else if (firstPartLower.includes('top') && firstPartLower.includes('right')) angle = 45;
+      else if (firstPartLower.includes('bottom') && firstPartLower.includes('right')) angle = 135;
+      else if (firstPartLower.includes('bottom') && firstPartLower.includes('left')) angle = 225;
+      else if (firstPartLower.includes('top') && firstPartLower.includes('left')) angle = 315;
     }
   }
 
   const stops: ColorStop[] = [];
-  // Parse stops
   const stopParts = parts.slice(stopsStartIndex);
   
+  // Regex to capture Color and optional Position
+  // Handles: #FFF, #FFFFFF, rgba(0,0,0,1), red
+  // And: 0%, 100px (though we expect % for gradients mostly)
   stopParts.forEach((part, index) => {
-    // Part looks like "rgba(255, 0, 0, 1) 0%" or "#FFF 100%"
-    // Or just color if implied position
-    const match = part.match(/(#[\da-f]{3,8}|rgba?\(.*?\)|[a-z]+)(?:\s+([\d.]+%?))?/i);
+    // 1. Try to split color and position by finding the last space that isn't inside parentheses
+    // This is hard with regex alone due to nesting. 
+    // Heuristic: Color is usually at start, Position at end.
+    
+    // Let's use the browser to help us via a dummy logic or robust regex
+    // Matches: (color string) (spacing) (percentage/length)
+    // Note: [\s\S] matches newlines too just in case
+    const match = part.match(/^([\s\S]+?)(?:\s+([\d.]+%?|[\d.]+px))?$/);
+    
     if (match) {
+      const colorStr = match[1].trim();
+      let positionStr = match[2];
+
       let position = 0;
-      if (match[2]) {
-        position = parseFloat(match[2]);
+      if (positionStr) {
+        position = parseFloat(positionStr);
       } else {
-        // Infer position
+        // Infer position if missing
         position = index === 0 ? 0 : index === stopParts.length - 1 ? 100 : (index / (stopParts.length - 1)) * 100;
       }
+
       stops.push({
-        color: match[1],
+        color: colorStr,
         position
       });
     }
@@ -97,17 +115,26 @@ const parseGradient = (gradientStr: string): Gradient | null => {
 };
 
 export const parseClipboardData = (text: string): FigmaLayer | null => {
-  // We assume the user copies "Properties" or "CSS" from Figma, or we parse a block of CSS.
-  // We create a dummy element to let the browser parse the CSS for us where possible.
-  
   const tempDiv = document.createElement('div');
   tempDiv.style.display = 'none';
   document.body.appendChild(tempDiv);
 
-  // Clean input to look like a style block content
-  const cleanText = text.replace(/[{}]/g, '').replace(/\n/g, ';');
-  tempDiv.setAttribute('style', cleanText);
+  // 1. Clean comments /* ... */
+  let cleanText = text.replace(/\/\*[\s\S]*?\*\//g, '');
+  
+  // 2. Normalize format
+  cleanText = cleanText.replace(/[{}]/g, '').replace(/\n/g, ';');
+  
+  // 3. Smart Detection: If user pasted JUST the value (e.g. "linear-gradient(...)") without property,
+  // we prepend a property name so the browser can parse it.
+  if (!cleanText.includes(':')) {
+    const trimmed = cleanText.trim();
+    if (trimmed.startsWith('linear-gradient') || trimmed.startsWith('radial-gradient') || trimmed.startsWith('#') || trimmed.startsWith('rgb')) {
+      cleanText = `background: ${trimmed}`;
+    }
+  }
 
+  tempDiv.setAttribute('style', cleanText);
   const style = tempDiv.style;
   
   // 1. Dimensions
@@ -116,36 +143,27 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   
   // 2. Corners
   const radiusStr = style.borderRadius || '0px';
-  // Check if uniform or individual
   const radii = radiusStr.split(' ').map(pxToNum);
   let corners: number | Corners = 0;
   
   if (radii.length === 1) {
     corners = radii[0];
   } else if (radii.length === 2) {
-    // top-left/bottom-right | top-right/bottom-left
     corners = { topLeft: radii[0], topRight: radii[1], bottomRight: radii[0], bottomLeft: radii[1] };
   } else if (radii.length === 4) {
     corners = { topLeft: radii[0], topRight: radii[1], bottomRight: radii[2], bottomLeft: radii[3] };
   } else {
-    // Fallback or 3 values (weird CSS shorthand)
     corners = radii[0] || 0;
   }
 
-  // 3. Fills (Backgrounds)
+  // 3. Fills
   const fills: Fill[] = [];
   const bgImage = style.backgroundImage;
   const bgColor = style.backgroundColor;
 
-  // If there are multiple background images (gradients), they are comma separated
-  if (bgImage && bgImage !== 'none') {
+  // Parse Background Images (Gradients)
+  if (bgImage && bgImage !== 'none' && bgImage !== 'initial') {
     const layers = splitCSSLayers(bgImage);
-    // CSS renders first layer on TOP. Figma/Android usually lists bottom-to-top in some contexts, 
-    // but <layer-list> draws first item at bottom. 
-    // Wait, <layer-list> draws standard painter's algorithm: last item is on top.
-    // CSS: first item is on top. 
-    // We will parse them in CSS order (Top -> Bottom).
-    
     layers.forEach(layer => {
       const gradient = parseGradient(layer);
       if (gradient) {
@@ -158,8 +176,15 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
     });
   }
 
-  // If there is a background color, it's usually the bottom-most layer in CSS logic if used with images
-  if (bgColor && bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
+  // Parse Background Color
+  // Browsers usually put the fallback color in backgroundColor.
+  // If we have gradients, we usually keep them on top.
+  // If we ONLY have color, add it.
+  const hasSolidColor = bgColor && bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent' && bgColor !== 'initial';
+  
+  if (hasSolidColor) {
+    // If we already have gradients, the solid color is typically the "fallback" or base layer.
+    // In Figma CSS, it lists them together.
     fills.push({
       type: 'solid',
       value: bgColor,
@@ -171,23 +196,20 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   const shadows: Shadow[] = [];
   const boxShadow = style.boxShadow;
   
-  if (boxShadow && boxShadow !== 'none') {
+  if (boxShadow && boxShadow !== 'none' && boxShadow !== 'initial') {
     const shadowLayers = splitCSSLayers(boxShadow);
     shadowLayers.forEach(layer => {
-      // Parse shadow: "inset 0px 4px 4px rgba(0, 0, 0, 0.25)"
-      // Regex is tricky, let's try a simple split approach knowing the structure
       const isInner = layer.includes('inset');
       const cleanLayer = layer.replace('inset', '').trim();
       
-      // Find color (starts with #, rgb, rgba)
-      const colorMatch = cleanLayer.match(/(rgba?\(.*?\)|#[\da-f]+|[a-z]+)/i);
+      // Extract color. Browser standardizes to rgb/rgba first usually.
+      // Match rgba(...) or rgb(...) or #HEX
+      const colorMatch = cleanLayer.match(/(rgba?\(.*?\)|#[\da-fA-F]+|[a-z]+)/i);
       const color = colorMatch ? colorMatch[0] : '#000000';
       
-      // Remove color to find nums
       const numsStr = cleanLayer.replace(color, '').trim();
       const nums = numsStr.split(/\s+/).map(pxToNum);
       
-      // usually: x y blur spread
       shadows.push({
         type: isInner ? 'inner' : 'drop',
         x: nums[0] || 0,
@@ -201,6 +223,12 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   }
 
   document.body.removeChild(tempDiv);
+
+  // Fallback if nothing found
+  if (fills.length === 0 && !hasSolidColor) {
+     // If we failed to parse specific fills but width/height worked, maybe it's just white?
+     // Or maybe parsing failed. We'll return what we have.
+  }
 
   return {
     name: 'Figma Component',
