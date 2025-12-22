@@ -70,7 +70,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
     const h = Math.round(layer.height);
     
     let xml = `<?xml version="1.0" encoding="utf-8"?>\n`;
-    xml += `<!-- Generated from Figma Advanced (Matrix Mode) -->\n`;
+    xml += `<!-- Generated from Figma Advanced (Separated Matrix Mode) -->\n`;
     xml += `<vector xmlns:android="http://schemas.android.com/apk/res/android"\n`;
     xml += `    xmlns:aapt="http://schemas.android.com/aapt"\n`;
     xml += `    android:width="${w}dp" android:height="${h}dp"\n`;
@@ -104,65 +104,60 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
             const centerX = (g.center?.x ?? 50) * w / 100;
             const centerY = (g.center?.y ?? 50) * h / 100;
             
-            const isElliptical = g.type === GradientType.Angular || g.type === GradientType.Radial;
-            
-            if (isElliptical) {
-                let scaleY = 1.0;
+            if (g.type === GradientType.Radial) {
+                // --- 径向渐变逻辑 (RADIAL) ---
+                let scaleY = h / w;
                 let baseRadius = Math.max(w, h);
-                let needsRotation = g.type === GradientType.Angular;
-
-                // SPECIALIZED CALCULATION FOR RADIAL
-                if (g.type === GradientType.Radial && g.size && g.size.x !== 0) {
+                
+                if (g.size && g.size.x !== 0) {
                     const horizRadiusPx = (g.size.x / 100) * w;
                     const vertRadiusPx = (g.size.y / 100) * h;
                     baseRadius = horizRadiusPx;
                     scaleY = vertRadiusPx / horizRadiusPx;
-                } 
-                // RETENTION OF WORKING ANGULAR LOGIC
-                else if (g.type === GradientType.Angular) {
-                    scaleY = h / w;
-                    if (g.size && g.size.x !== 0) {
-                        scaleY = (g.size.y / g.size.x) * (h / w);
-                    }
                 }
 
-                // Outer group: Squash
                 xml += `    <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
                 xml += `           android:scaleY="${scaleY.toFixed(6)}">\n`;
-                
-                if (needsRotation) {
-                    const rotation = (g.angle || 0) - 90;
-                    xml += `        <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
-                    xml += `               android:rotation="${rotation.toFixed(2)}">\n`;
-                }
-
-                const maxDim = Math.max(w, h) * 8; // Larger buffer for radial coverage
-                const fillX = centerX - maxDim / 2;
-                const fillY = centerY - maxDim / 2;
-                const pad = needsRotation ? '            ' : '        ';
-
-                xml += `${pad}<path android:pathData="M${fillX.toFixed(1)},${fillY.toFixed(1)} h${maxDim.toFixed(1)} v${maxDim.toFixed(1)} h-${maxDim.toFixed(1)} z">\n`;
-                xml += `${pad}    <aapt:attr name="android:fillColor">\n`;
-                xml += `${pad}        <gradient android:type="${g.type === GradientType.Angular ? 'sweep' : 'radial'}"\n`;
-                xml += `${pad}                  android:centerX="${centerX.toFixed(2)}"\n`;
-                xml += `${pad}                  android:centerY="${centerY.toFixed(2)}"\n`;
-                
-                if (g.type === GradientType.Radial) {
-                    xml += `${pad}                  android:gradientRadius="${baseRadius.toFixed(2)}"\n`;
-                }
-
+                xml += `        <path android:pathData="M${(centerX - baseRadius * 4).toFixed(1)},${(centerY - baseRadius * 4).toFixed(1)} h${(baseRadius * 8).toFixed(1)} v${(baseRadius * 8).toFixed(1)} h-${(baseRadius * 8).toFixed(1)} z">\n`;
+                xml += `            <aapt:attr name="android:fillColor">\n`;
+                xml += `                <gradient android:type="radial"\n`;
+                xml += `                          android:centerX="${centerX.toFixed(2)}" android:centerY="${centerY.toFixed(2)}"\n`;
+                xml += `                          android:gradientRadius="${baseRadius.toFixed(2)}">\n`;
                 g.stops.sort((a,b) => a.position - b.position).forEach(stop => {
-                    xml += `${pad}            <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
+                    xml += `                    <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
                 });
+                xml += `                </gradient>\n`;
+                xml += `            </aapt:attr>\n`;
+                xml += `        </path>\n`;
+                xml += `    </group>\n`;
+            } else if (g.type === GradientType.Angular) {
+                // --- 角度渐变逻辑 (ANGULAR) ---
+                let scaleY = h / w;
+                if (g.size && g.size.x !== 0) {
+                    scaleY = (g.size.y / g.size.x) * (h / w);
+                }
+                const rotation = (g.angle || 0) - 90;
+
+                xml += `    <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
+                xml += `           android:scaleY="${scaleY.toFixed(6)}">\n`;
+                xml += `        <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
+                xml += `               android:rotation="${rotation.toFixed(2)}">\n`;
                 
-                xml += `${pad}        </gradient>\n`;
-                xml += `${pad}    </aapt:attr>\n`;
-                xml += `${pad}</path>\n`;
-                
-                if (needsRotation) xml += `        </group>\n`;
+                const sweepSize = Math.max(w, h) * 4;
+                xml += `            <path android:pathData="M${(centerX - sweepSize).toFixed(1)},${(centerY - sweepSize).toFixed(1)} h${(sweepSize * 2).toFixed(1)} v${(sweepSize * 2).toFixed(1)} h-${(sweepSize * 2).toFixed(1)} z">\n`;
+                xml += `                <aapt:attr name="android:fillColor">\n`;
+                xml += `                    <gradient android:type="sweep"\n`;
+                xml += `                              android:centerX="${centerX.toFixed(2)}" android:centerY="${centerY.toFixed(2)}">\n`;
+                g.stops.sort((a,b) => a.position - b.position).forEach(stop => {
+                    xml += `                        <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
+                });
+                xml += `                    </gradient>\n`;
+                xml += `                </aapt:attr>\n`;
+                xml += `            </path>\n`;
+                xml += `        </group>\n`;
                 xml += `    </group>\n`;
             } else {
-                // Standard Linear
+                // --- 线性渐变逻辑 (LINEAR) ---
                 xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z">\n`;
                 xml += `        <aapt:attr name="android:fillColor">\n`;
                 xml += `            <gradient android:type="linear"\n`;

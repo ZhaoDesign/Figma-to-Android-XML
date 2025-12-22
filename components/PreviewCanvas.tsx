@@ -54,27 +54,50 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
       const centerX = g.center?.x ?? 50;
       const centerY = g.center?.y ?? 50;
 
-      const isElliptical = g.type === GradientType.Angular || g.type === GradientType.Radial;
-      
-      if (isElliptical) {
+      if (g.type === GradientType.Radial) {
+        // --- 径向渐变预览逻辑 ---
         let scaleY = data.height / data.width;
         let baseRadiusPx = data.width / 2;
 
-        if (g.type === GradientType.Radial && g.size && g.size.x !== 0) {
+        if (g.size && g.size.x !== 0) {
            const horizRadius = (g.size.x / 100) * data.width;
            const vertRadius = (g.size.y / 100) * data.height;
            baseRadiusPx = horizRadius;
            scaleY = vertRadius / horizRadius;
-        } else if (g.type === GradientType.Angular && g.size && g.size.x !== 0) {
-           scaleY = (g.size.y / g.size.x) * (data.height / data.width);
         }
 
-        const size = baseRadiusPx * 12; // Buffer for coverage
+        const size = baseRadiusPx * 10;
+        return (
+          <div key={index} 
+            style={{
+              position: 'absolute',
+              left: `${centerX}%`,
+              top: `${centerY}%`,
+              width: size,
+              height: size,
+              pointerEvents: 'none',
+              transform: `translate(-50%, -50%) scale(1, ${scaleY})`,
+              opacity: fill.opacity ?? 1,
+              mixBlendMode: (fill.blendMode || 'normal') as any,
+              transformOrigin: '50% 50%'
+            }}
+          >
+            <div style={{
+                width: '100%',
+                height: '100%',
+                background: `radial-gradient(circle at 50% 50%, ${stopsStr})`,
+                transformOrigin: '50% 50%'
+            }} />
+          </div>
+        );
+      } else if (g.type === GradientType.Angular) {
+        // --- 角度渐变预览逻辑 ---
+        let scaleY = (data.height / data.width);
+        if (g.size && g.size.x !== 0) {
+           scaleY = (g.size.y / g.size.x) * (data.height / data.width);
+        }
         const angle = g.angle !== undefined ? g.angle : 0;
-        
-        const background = g.type === GradientType.Angular
-          ? `conic-gradient(from 0deg at 50% 50%, ${stopsStr})`
-          : `radial-gradient(circle at 50% 50%, ${stopsStr})`;
+        const size = Math.max(data.width, data.height) * 4;
 
         return (
           <div key={index} 
@@ -94,15 +117,15 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
             <div style={{
                 width: '100%',
                 height: '100%',
-                background: background,
-                // Nested rotation ONLY for Angular/Conic to preserve correct elliptical sweep
-                transform: g.type === GradientType.Angular ? `rotate(${angle}deg)` : 'none',
+                background: `conic-gradient(from 0deg at 50% 50%, ${stopsStr})`,
+                transform: `rotate(${angle}deg)`,
                 transformOrigin: '50% 50%'
             }} />
           </div>
         );
       }
 
+      // 线性渐变
       const background = `linear-gradient(${g.angle || 0}deg, ${stopsStr})`;
       return (
         <div key={index} style={{
