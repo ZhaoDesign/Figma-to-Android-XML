@@ -98,9 +98,16 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
             xml += `          android:fillColor="${toAndroidHex(fill.value as string)}" />\n`;
         } else if (fill.type === 'gradient') {
             const g = fill.value as Gradient;
+            let androidType = 'linear';
+            if (g.type === GradientType.Radial || g.type === GradientType.Diamond) androidType = 'radial';
+            if (g.type === GradientType.Angular) androidType = 'sweep';
+
             xml += `          >\n`;
+            if (g.type === GradientType.Diamond) {
+                xml += `        <!-- Diamond Gradient approximated as Radial -->\n`;
+            }
             xml += `        <aapt:attr name="android:fillColor">\n`;
-            xml += `            <gradient android:type="${g.type === GradientType.Linear ? 'linear' : 'radial'}"\n`;
+            xml += `            <gradient android:type="${androidType}"\n`;
             xml += `                      android:startColor="${toAndroidHex(g.stops[0].color)}"\n`;
             xml += `                      android:endColor="${toAndroidHex(g.stops[g.stops.length-1].color)}" />\n`;
             xml += `        </aapt:attr>\n`;
@@ -108,12 +115,12 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
         }
     });
 
-    // 4. Inner Shadows (Enhanced Simulation)
+    // 4. Inner Shadows
     layer.shadows.filter(s => s.type === 'inner' && s.visible).forEach((s, idx) => {
-        const strokeWidth = s.blur > 0 ? s.blur * 2 : 2; // Use at least 2px stroke for visible hard shadows
+        const strokeWidth = s.blur > 0 ? s.blur * 2 : 2;
         xml += `\n    <!-- Inner Shadow ${idx + 1} Approximation -->\n`;
         xml += `    <path android:pathData="${mainPath}"\n`;
-        xml += `          android:fillColor="#00000000"\n`; // CRITICAL: Prevent default black fill
+        xml += `          android:fillColor="#00000000"\n`; 
         xml += `          android:strokeWidth="${strokeWidth}"\n`;
         xml += `          android:strokeColor="${toAndroidHex(s.color)}"\n`;
         xml += `          android:translateX="${s.x}"\n`;

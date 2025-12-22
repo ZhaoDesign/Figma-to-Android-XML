@@ -12,6 +12,16 @@ const renderGradient = (g: Gradient): string => {
     .map(s => `${s.color} ${s.position}%`)
     .join(', ');
 
+  if (g.type === GradientType.Angular) {
+      const angle = g.angle !== undefined ? `${g.angle}deg` : '0deg';
+      return `conic-gradient(from ${angle} at 50% 50%, ${stopsStr})`;
+  }
+
+  if (g.type === GradientType.Diamond) {
+      // CSS approximation of diamond: specialized radial
+      return `radial-gradient(ellipse at 50% 50%, ${stopsStr})`;
+  }
+
   if (g.rawGeometry) {
     if (g.type === GradientType.Linear) return `linear-gradient(${g.rawGeometry}, ${stopsStr})`;
     return `radial-gradient(${g.rawGeometry}, ${stopsStr})`;
@@ -48,20 +58,17 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
     overflow: 'hidden',
     isolation: 'isolate',
     filter: data.blur ? `blur(${data.blur}px)` : undefined,
-    boxShadow: dropShadows, // Drop shadows apply to the container itself
+    boxShadow: dropShadows, 
   };
 
   return (
     <div className="w-full h-full min-h-[400px] flex flex-col items-center justify-center bg-gray-900 relative overflow-hidden border border-gray-750 rounded-xl">
-      {/* Grid Background */}
       <div className="absolute inset-0 opacity-10 pointer-events-none" 
            style={{ backgroundImage: 'radial-gradient(#475569 1px, transparent 1px)', backgroundSize: '20px 20px' }}>
       </div>
       
-      {/* Shadow Wrapper to prevent clipping of drop shadows */}
       <div className="relative">
          <div style={containerStyle}>
-            {/* Backdrop Blur Layer */}
             {data.backdropBlur ? (
               <div style={{
                 position: 'absolute',
@@ -72,7 +79,6 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
               }} />
             ) : null}
 
-            {/* Fills Layers (Bottom to Top) */}
             {[...data.fills].reverse().map((fill, index) => {
               if (!fill.visible) return null;
               const background = fill.type === 'solid' 
@@ -91,7 +97,6 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
               );
             })}
 
-            {/* Inner Shadows Overlay - Must be on top of fills */}
             {innerShadows && (
               <div style={{
                   position: 'absolute',
@@ -103,7 +108,6 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
               }} />
             )}
             
-            {/* Label */}
             <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
               <span className="text-white font-semibold mix-blend-difference text-lg select-none">
                  {label || 'Preview'}
@@ -115,7 +119,6 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
       <div className="absolute bottom-4 text-xs text-gray-500 font-mono flex flex-wrap justify-center gap-x-4 gap-y-1 px-4">
         <span>Size: {Math.round(data.width)}×{Math.round(data.height)}</span>
         {data.backdropBlur ? <span className="text-blue-400">Backdrop Blur: {data.backdropBlur}px</span> : null}
-        {innerShadows ? <span className="text-purple-400">Inner Shadow Active</span> : null}
       </div>
     </div>
   );

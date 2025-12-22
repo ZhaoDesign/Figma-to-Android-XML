@@ -2,7 +2,6 @@ import { FigmaLayer, Fill, Gradient, GradientType, ColorStop, Shadow, Corners } 
 
 const pxToNum = (val: string): number => {
   if (!val) return 0;
-  // Handle figma unitless values often seen in some copy-paste scenarios
   const clean = val.trim().replace('px', '');
   return parseFloat(clean) || 0;
 };
@@ -31,7 +30,9 @@ const parseGradient = (gradientStr: string): Gradient | null => {
   const lowerStr = gradientStr.toLowerCase();
   const isLinear = lowerStr.includes('linear-gradient');
   const isRadial = lowerStr.includes('radial-gradient');
-  if (!isLinear && !isRadial) return null;
+  const isConic = lowerStr.includes('conic-gradient');
+  
+  if (!isLinear && !isRadial && !isConic) return null;
 
   const firstParen = gradientStr.indexOf('(');
   const lastParen = gradientStr.lastIndexOf(')');
@@ -40,6 +41,7 @@ const parseGradient = (gradientStr: string): Gradient | null => {
   const content = gradientStr.substring(firstParen + 1, lastParen);
   const parts = splitCSSLayers(content);
   
+  let type = isLinear ? GradientType.Linear : (isRadial ? GradientType.Radial : GradientType.Angular);
   let angle = 180;
   let stopsStartIndex = 0;
   let rawGeometry: string | undefined = undefined;
@@ -47,7 +49,7 @@ const parseGradient = (gradientStr: string): Gradient | null => {
   const firstPart = parts[0];
   const firstPartLower = firstPart.toLowerCase();
   
-  const keywords = ['circle', 'ellipse', 'at', 'center', 'top', 'bottom', 'left', 'right', 'deg', 'to '];
+  const keywords = ['circle', 'ellipse', 'at', 'center', 'top', 'bottom', 'left', 'right', 'deg', 'to ', 'from '];
   const isGeometry = keywords.some(k => firstPartLower.includes(k));
 
   if (isGeometry) {
@@ -56,20 +58,42 @@ const parseGradient = (gradientStr: string): Gradient | null => {
     if (isLinear && firstPartLower.includes('deg')) {
       angle = parseFloat(firstPartLower);
     }
+    if (isConic && firstPartLower.includes('from')) {
+        const match = firstPartLower.match(/from\s+([\d.]+)deg/);
+        if (match) angle = parseFloat(match[1]);
+    }
+  }
+
+  // Detect Diamond (Figma often exports Diamond as radial-gradient with specific keywords or geometry)
+  if (isRadial && (lowerStr.includes('diamond') || firstPartLower.includes('ellipse'))) {
+      // Figma doesn't have a standard CSS keyword for diamond, 
+      // but if we detect specialized geometry in a radial context, we flag it.
+      // Usually users copy-paste raw CSS which might contain comments.
+      if (gradientStr.includes('diamond')) type = GradientType.Diamond;
   }
 
   const stops: ColorStop[] = [];
   parts.slice(stopsStartIndex).forEach((part, index, arr) => {
-    const match = part.match(/^([\s\S]+?)(?:\s+(-?[\d.]+%?|-?[\d.]+px|-?[\d.]+))?$/);
+    // Handle "color position" or just "color"
+    const match = part.match(/^([\s\S]+?)(?:\s+(-?[\d.]+(?:%|px|deg|))|)$/);
     if (match) {
       let colorStr = match[1].trim();
       let posVal = match[2];
-      let position = posVal ? parseFloat(posVal) : (index / (arr.length - 1)) * 100;
+      let position = 0;
+      
+      if (posVal) {
+          if (posVal.includes('%')) position = parseFloat(posVal);
+          else if (posVal.includes('deg')) position = (parseFloat(posVal) / 360) * 100;
+          else position = parseFloat(posVal);
+      } else {
+          position = (index / (arr.length - 1)) * 100;
+      }
+      
       stops.push({ color: colorStr, position: isNaN(position) ? 0 : position });
     }
   });
 
-  return { type: isLinear ? GradientType.Linear : GradientType.Radial, angle, rawGeometry, stops };
+  return { type, angle, rawGeometry, stops };
 };
 
 export const parseClipboardData = (text: string): FigmaLayer | null => {

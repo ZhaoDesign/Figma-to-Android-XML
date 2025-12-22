@@ -2,6 +2,7 @@ export enum GradientType {
   Linear = 'linear',
   Radial = 'radial',
   Angular = 'angular',
+  Diamond = 'diamond',
 }
 
 export interface ColorStop {
