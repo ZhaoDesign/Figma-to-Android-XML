@@ -1,95 +1,117 @@
 import { FigmaLayer, Fill, Gradient, GradientType, ColorStop, Corners, Shadow } from '../types';
 
 // Android Hex is #AARRGGBB
-const toAndroidHex = (cssColor: string): string => {
-  // Fast path for Hex
-  if (cssColor.startsWith('#')) {
-    if (cssColor.length === 7) return '#FF' + cssColor.substring(1).toUpperCase();
-    if (cssColor.length === 9) return cssColor.toUpperCase(); 
-    if (cssColor.length === 4) {
-      const r = cssColor[1]; const g = cssColor[2]; const b = cssColor[3];
-      return `#FF${r}${r}${g}${g}${b}${b}`.toUpperCase();
+const toAndroidHex = (cssColor: string, forceRgbFrom?: string): string => {
+  // 1. Helper to get RGBA from string
+  const getRgba = (c: string) => {
+    // Create a dummy element/canvas to normalize color string (handles named colors, rgb, hsl, hex)
+    if (c.startsWith('#') && c.length === 9) {
+        // Already #AARRGGBB (our internal format mostly) or #RRGGBBAA? 
+        // CSS usually uses #RRGGBBAA.
+        const r = parseInt(c.slice(1,3), 16);
+        const g = parseInt(c.slice(3,5), 16);
+        const b = parseInt(c.slice(5,7), 16);
+        const a = parseInt(c.slice(7,9), 16) / 255;
+        return {r,g,b,a};
     }
-    return '#FF' + cssColor.substring(1).toUpperCase();
-  }
+    
+    // Fallback parsing
+    const ctx = document.createElement('canvas').getContext('2d');
+    if (!ctx) return {r:0,g:0,b:0,a:1};
+    ctx.fillStyle = c;
+    let computed = ctx.fillStyle; // returns #RRGGBB or rgba()
+    
+    if (computed.startsWith('#')) {
+       const r = parseInt(computed.slice(1,3), 16);
+       const g = parseInt(computed.slice(3,5), 16);
+       const b = parseInt(computed.slice(5,7), 16);
+       return {r,g,b,a:1};
+    }
+    if (computed.startsWith('rgba')) {
+        const parts = computed.match(/[\d.]+/g);
+        if (parts && parts.length >= 4) {
+            return {r: parseFloat(parts[0]), g: parseFloat(parts[1]), b: parseFloat(parts[2]), a: parseFloat(parts[3])};
+        }
+    }
+    return {r:0, g:0, b:0, a:1};
+  };
 
-  const match = cssColor.match(/rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\)/);
-  if (match) {
-    const r = parseInt(match[1]);
-    const g = parseInt(match[2]);
-    const b = parseInt(match[3]);
-    const aVal = match[4] !== undefined ? parseFloat(match[4]) : 1;
-    const alphaInt = Math.round(aVal * 255);
-    const toHex = (n: number) => n.toString(16).padStart(2, '0').toUpperCase();
-    return `#${toHex(alphaInt)}${toHex(r)}${toHex(g)}${toHex(b)}`;
-  }
+  const current = getRgba(cssColor);
   
-  // Fallback using Canvas
-  const ctx = document.createElement('canvas').getContext('2d');
-  if (!ctx) return '#FF000000';
-  ctx.fillStyle = cssColor;
-  const computed = ctx.fillStyle; 
-  if (computed.startsWith('#')) {
-     if (computed.length === 7) return '#FF' + computed.substring(1).toUpperCase();
-     return computed.toUpperCase();
+  // 2. "Muddy Gray" Fix:
+  // If this color is fully transparent (alpha=0), Android interpolates it as Black Transparent (#00000000).
+  // If blending with Red, it goes Red -> Dark Red -> Gray -> Transparent.
+  // We want Red -> Transparent Red.
+  // So if alpha is 0, we use the RGB from 'forceRgbFrom' if provided.
+  if (current.a <= 0.01 && forceRgbFrom) {
+      const neighbor = getRgba(forceRgbFrom);
+      // Return neighbor's RGB with 00 Alpha
+      const toHex = (n: number) => Math.round(n).toString(16).padStart(2, '0').toUpperCase();
+      return `#00${toHex(neighbor.r)}${toHex(neighbor.g)}${toHex(neighbor.b)}`;
   }
-  return '#FF000000';
+
+  // Standard Return #AARRGGBB
+  const alphaInt = Math.round(current.a * 255);
+  const toHex = (n: number) => Math.round(n).toString(16).padStart(2, '0').toUpperCase();
+  return `#${toHex(alphaInt)}${toHex(current.r)}${toHex(current.g)}${toHex(current.b)}`;
 };
 
-// Helper: Parse Hex/RGBA to {r,g,b,a} for math
 const parseColorToRgba = (color: string): {r: number, g: number, b: number, a: number} => {
-    // We leverage the browser's ability to normalize colors via our toAndroidHex, then parse that back
-    const hex = toAndroidHex(color); // #AARRGGBB
-    const a = parseInt(hex.substring(1, 3), 16) / 255;
-    const r = parseInt(hex.substring(3, 5), 16);
-    const g = parseInt(hex.substring(5, 7), 16);
-    const b = parseInt(hex.substring(7, 9), 16);
-    return { r, g, b, a };
+    // simplified for interpolation usage
+    const ctx = document.createElement('canvas').getContext('2d');
+    if (!ctx) return {r:0,g:0,b:0,a:1};
+    ctx.fillStyle = color;
+    const computed = ctx.fillStyle;
+    
+    if (computed.startsWith('#')) {
+        const r = parseInt(computed.slice(1,3), 16);
+        const g = parseInt(computed.slice(3,5), 16);
+        const b = parseInt(computed.slice(5,7), 16);
+        return {r,g,b,a:1};
+    }
+    const match = computed.match(/rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\)/);
+    if(match) {
+        return {
+            r: parseInt(match[1]), g: parseInt(match[2]), b: parseInt(match[3]),
+            a: match[4] ? parseFloat(match[4]) : 1
+        };
+    }
+    return {r:0,g:0,b:0,a:1};
 };
 
-// Interpolate between two colors
 const interpolateColor = (c1: string, c2: string, factor: number): string => {
     const start = parseColorToRgba(c1);
     const end = parseColorToRgba(c2);
-    
-    // Clamp factor 0-1
     const t = Math.max(0, Math.min(1, factor));
-    
-    const r = Math.round(start.r + (end.r - start.r) * t);
-    const g = Math.round(start.g + (end.g - start.g) * t);
-    const b = Math.round(start.b + (end.b - start.b) * t);
+    const r = start.r + (end.r - start.r) * t;
+    const g = start.g + (end.g - start.g) * t;
+    const b = start.b + (end.b - start.b) * t;
     const a = start.a + (end.a - start.a) * t;
-    
     const alphaInt = Math.round(a * 255);
-    const toHex = (n: number) => n.toString(16).padStart(2, '0').toUpperCase();
-    
+    const toHex = (n: number) => Math.round(n).toString(16).padStart(2, '0').toUpperCase();
     return `#${toHex(alphaInt)}${toHex(r)}${toHex(g)}${toHex(b)}`;
 };
 
-// Calculate the color at a specific percentage (0-100) based on existing stops
 const getColorAtPosition = (stops: ColorStop[], targetPos: number): string => {
-    // Sort stops
     const sorted = [...stops].sort((a, b) => a.position - b.position);
-    
-    // Boundary checks
     if (targetPos <= sorted[0].position) return sorted[0].color;
     if (targetPos >= sorted[sorted.length - 1].position) return sorted[sorted.length - 1].color;
-    
-    // Find surrounding stops
     for (let i = 0; i < sorted.length - 1; i++) {
         const current = sorted[i];
         const next = sorted[i + 1];
         if (targetPos >= current.position && targetPos <= next.position) {
             const range = next.position - current.position;
+            if (range === 0) return current.color;
             const progress = (targetPos - current.position) / range;
             return interpolateColor(current.color, next.color, progress);
         }
     }
-    return sorted[0].color; // Fallback
+    return sorted[0].color;
 };
 
 const mapAngle = (cssDeg: number): number => {
   let android = (450 - cssDeg) % 360;
+  // Snap to nearest 45
   const remainder = android % 45;
   if (remainder < 22.5) {
     android = android - remainder;
@@ -112,21 +134,25 @@ const generateCorners = (corners: Corners | number): string => {
 };
 
 const generateGradient = (gradient: Gradient): string => {
-  const { angle = 180, stops, type } = gradient;
+  const { angle = 180, stops, type, rawGeometry } = gradient;
   
-  // Calculate exact colors for Android's start(0%), center(50%), end(100%)
-  // ignoring where the actual stops are (e.g. -20% or 150%)
-  const startColor = toAndroidHex(getColorAtPosition(stops, 0));
-  const endColor = toAndroidHex(getColorAtPosition(stops, 100));
+  // --- Smart Transparency Fix ---
+  // If the start or end colors are transparent, we need to "borrow" the RGB from the center/adjacent colors
+  // so Android interpolates opacity only, not color.
   
+  const rawStart = getColorAtPosition(stops, 0);
+  const rawEnd = getColorAtPosition(stops, 100);
+  const rawCenter = getColorAtPosition(stops, 50); // Sample middle for reference
+
+  // If Start is transparent, borrow RGB from Center (or End)
+  const startColor = toAndroidHex(rawStart, rawCenter);
+  // If End is transparent, borrow RGB from Center (or Start)
+  const endColor = toAndroidHex(rawEnd, rawCenter);
+  
+  // For Center, just use as is
+  const centerHex = toAndroidHex(rawCenter);
+
   let centerAttr = '';
-  // Check if we have a significant color shift in the middle
-  // We determine "center" by strictly sampling at 50%
-  const centerHex = toAndroidHex(getColorAtPosition(stops, 50));
-  
-  // Optimization: Only add center color if it's not just a linear mix of start/end.
-  // But for fidelity, usually safer to add it if the stops suggest complexity.
-  // Simple check: if we have > 2 stops originally, we add center.
   if (stops.length > 2) {
     centerAttr = `\n        android:centerColor="${centerHex}"`;
   }
@@ -136,12 +162,27 @@ const generateGradient = (gradient: Gradient): string => {
   
   if (type === GradientType.Radial) {
     typeAttr = 'android:type="radial"';
-    // For Radial gradients in Figma (especially soft highlights), the visual "end" 
-    // often corresponds to the width of the element or more.
-    // 50%p is strict radius (half width). 75%p often feels closer to CSS 'farthest-corner' for button glows.
-    // If the user drags handles outside, our `endColor` interpolation handles the fade, 
-    // but we need enough geometric room.
-    angleAttr = 'android:gradientRadius="75%p"'; 
+    
+    // Heuristic for Gradient Radius based on CSS geometry
+    let radiusVal = "75%p"; // Default
+    
+    if (rawGeometry) {
+        // Look for size definitions like "80% 80%" or "150px"
+        const sizeMatch = rawGeometry.match(/(\d+)%\s*(\d+)?%/);
+        if (sizeMatch) {
+            const w = parseInt(sizeMatch[1]);
+            const h = sizeMatch[2] ? parseInt(sizeMatch[2]) : w;
+            const maxDim = Math.max(w, h);
+            
+            // Map CSS size to Android Radius roughly
+            // Cap it reasonably to avoid rendering errors
+            if (maxDim > 0) {
+                radiusVal = `${Math.min(maxDim, 150)}%p`;
+            }
+        }
+    }
+    
+    angleAttr = `android:gradientRadius="${radiusVal}"`; 
   } else {
     const androidAngle = mapAngle(angle);
     angleAttr = `android:angle="${androidAngle}"`;
@@ -162,7 +203,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
   if (needsLayerList) {
     xml += `<layer-list xmlns:android="http://schemas.android.com/apk/res/android">\n`;
     
-    // 1. Drop Shadows
+    // Shadows
     const dropShadows = layer.shadows.filter(s => s.type === 'drop' && s.visible);
     const innerShadows = layer.shadows.filter(s => s.type === 'inner' && s.visible);
     
@@ -178,7 +219,10 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
         });
     }
 
-    // 2. Fills
+    // Fills
+    // Android draws top-down (last item is on top).
+    // layer.fills[0] is Figma Top.
+    // So we reverse it: [Bottom, ..., Top].
     const reversedFills = [...layer.fills].reverse();
     
     reversedFills.forEach((fill) => {
@@ -196,9 +240,8 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
         xml += `    </item>\n`;
     });
     
-    // 3. Inner Shadows
+    // Inner Shadows
     if (innerShadows.length > 0) {
-        xml += `    <!-- ⚠️ Inner Shadow approximation -->\n`;
         innerShadows.forEach(shadow => {
             xml += `    <item>\n`;
              xml += `        <shape android:shape="rectangle">\n`;
