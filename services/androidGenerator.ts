@@ -2,40 +2,50 @@ import { FigmaLayer, Fill, Gradient, GradientType, ColorStop, Corners, Shadow } 
 
 // Android Hex is #AARRGGBB, CSS is #RRGGBB or rgba
 const toAndroidHex = (cssColor: string): string => {
-  const ctx = document.createElement('canvas').getContext('2d');
-  if (!ctx) return '#FF000000';
-  ctx.fillStyle = cssColor;
-  // This computes to #RRGGBB or rgba(r,g,b,a) format
-  const computed = ctx.fillStyle; 
-  
-  if (computed.startsWith('#')) {
-    // #RRGGBB -> #FFRRGGBB
-    if (computed.length === 7) return '#FF' + computed.substring(1).toUpperCase();
-    return computed.toUpperCase();
+  // Fast path for Hex
+  if (cssColor.startsWith('#')) {
+    if (cssColor.length === 7) return '#FF' + cssColor.substring(1).toUpperCase();
+    if (cssColor.length === 9) return cssColor.toUpperCase(); // Already has alpha? CSS usually doesn't output #RRGGBBAA widely yet but possible
+    if (cssColor.length === 4) {
+      // #RGB -> #FFRRGGBB
+      const r = cssColor[1];
+      const g = cssColor[2];
+      const b = cssColor[3];
+      return `#FF${r}${r}${g}${g}${b}${b}`.toUpperCase();
+    }
+    return '#FF' + cssColor.substring(1).toUpperCase();
   }
-  
-  // Handle rgba? The canvas context normally converts rgba to hex if alpha is 1, 
-  // but let's parse raw rgba if needed or stick to a simple converter.
-  // For robustness, let's use a temporary DOM element opacity trick or regex
-  // A regex for rgba(r, g, b, a)
-  const match = cssColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+
+  // Regex for rgba(r, g, b, a) or rgb(r, g, b)
+  // Handles spaces freely: rgba( 255 , 0 , 0 , 0.5 )
+  const match = cssColor.match(/rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\)/);
   if (match) {
     const r = parseInt(match[1]);
     const g = parseInt(match[2]);
     const b = parseInt(match[3]);
-    const a = match[4] ? parseFloat(match[4]) : 1;
     
-    const alphaInt = Math.round(a * 255);
-    const hex = (
-      (alphaInt << 24) |
-      (r << 16) |
-      (g << 8) |
-      b
-    ).toString(16).toUpperCase().padStart(8, '0'); // padStart ensures leading zeros
-    // bitwise operation in JS acts on 32-bit signed ints, causing issues with high alpha.
-    // Safer string manipulation:
+    // If alpha group (index 4) is undefined, it means rgb() which is alpha 1
+    const aVal = match[4] !== undefined ? parseFloat(match[4]) : 1;
+    
+    const alphaInt = Math.round(aVal * 255);
     const toHex = (n: number) => n.toString(16).padStart(2, '0').toUpperCase();
+    
     return `#${toHex(alphaInt)}${toHex(r)}${toHex(g)}${toHex(b)}`;
+  }
+  
+  // Fallback to canvas for named colors (red, blue, transparent)
+  const ctx = document.createElement('canvas').getContext('2d');
+  if (!ctx) return '#FF000000';
+  ctx.fillStyle = cssColor;
+  const computed = ctx.fillStyle; 
+  
+  if (computed.startsWith('#')) {
+     if (computed.length === 7) return '#FF' + computed.substring(1).toUpperCase();
+     return computed.toUpperCase();
+  }
+  // If canvas returns rgba (e.g. transparent), recurse
+  if (computed.startsWith('rgba') && computed !== cssColor) {
+     return toAndroidHex(computed);
   }
   
   return '#FF000000';
@@ -74,25 +84,25 @@ const generateCorners = (corners: Corners | number): string => {
 const generateGradient = (gradient: Gradient): string => {
   const { angle = 180, stops, type } = gradient;
   
-  // Android limitation: shape gradients primarily support start/center/end or API 24+ item arrays.
-  // We will aim for standard <gradient> tag compatibility (API 21+).
-  
   // 1. Sort stops by position
   const sortedStops = [...stops].sort((a, b) => a.position - b.position);
   
   if (sortedStops.length === 0) return '';
 
   const startColor = toAndroidHex(sortedStops[0].color);
+  // Fix: Ensure we grab the actual last one
   const endColor = toAndroidHex(sortedStops[sortedStops.length - 1].color);
   
   let centerAttr = '';
   
+  // Android Gradient limitation: only 3 colors (start, center, end) usually supported in standard <shape>
+  // unless API 24+ attributes are used. We stick to API 21+ compatible standard attributes.
   if (sortedStops.length >= 3) {
-    // Pick the middle-most stop
-    const middleStop = sortedStops[Math.floor((sortedStops.length - 1) / 2)];
+    const middleIndex = Math.floor((sortedStops.length - 1) / 2);
+    // Find the stop closest to 50%? Or just the middle index.
+    const middleStop = sortedStops[middleIndex];
     const centerHex = toAndroidHex(middleStop.color);
     centerAttr = `\n        android:centerColor="${centerHex}"`;
-    // Note: android:centerY is 0.5 by default
   }
 
   let typeAttr = '';
@@ -117,28 +127,17 @@ const generateGradient = (gradient: Gradient): string => {
 export const generateAndroidXML = (layer: FigmaLayer): string => {
   let xml = `<?xml version="1.0" encoding="utf-8"?>\n<!-- Generated from Figma -->\n`;
   
-  // Do we need a layer list?
-  // We need it if:
-  // 1. More than 1 fill
-  // 2. Shadows (simulated via items)
-  // 3. To handle render order (CSS: Top->Bottom, Android LayerList: Bottom->Top)
-  
   const needsLayerList = layer.fills.length > 1 || layer.shadows.length > 0;
   
   if (needsLayerList) {
     xml += `<layer-list xmlns:android="http://schemas.android.com/apk/res/android">\n`;
     
-    // 1. Handle Shadows (Drop shadows are placed 'behind' the main shape in layer list, 
-    // but typically Android uses `elevation`. If we MUST emulate in XML, we use offset items with transparent gradients.
-    // For this strict implementation, we will add a comment for Drop Shadow and try to implement it if simple.
-    // Inner shadow is on TOP of content.
-    
+    // 1. Drop Shadows (Bottom layer)
     const dropShadows = layer.shadows.filter(s => s.type === 'drop' && s.visible);
     const innerShadows = layer.shadows.filter(s => s.type === 'inner' && s.visible);
     
     if (dropShadows.length > 0) {
         xml += `    <!-- ⚠️ Note: Drop Shadows in XML are approximations. Prefer android:elevation on the View. -->\n`;
-        // We can simulate a simple shadow with a shape shifted by inset
         dropShadows.forEach((shadow, idx) => {
              xml += `    <item android:left="${shadow.x}dp" android:top="${shadow.y}dp">\n`;
              xml += `        <shape android:shape="rectangle">\n`;
@@ -149,10 +148,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
         });
     }
 
-    // 2. Handle Fills. 
-    // CSS Fills are Top -> Bottom.
-    // Android Layer List paints Order 0 (Bottom) -> Order N (Top).
-    // So we reverse the CSS fills array.
+    // 2. Fills (CSS Top->Bottom, Android Bottom->Top, so Reverse)
     const reversedFills = [...layer.fills].reverse();
     
     reversedFills.forEach((fill, index) => {
@@ -172,14 +168,10 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
         xml += `    </item>\n`;
     });
     
-    // 3. Handle Inner Shadows (Overlay)
-    // Inner shadows are essentially a gradient or stroke drawn ON TOP.
-    // Approximating inner shadow in XML is hard without `stroke` hacks.
+    // 3. Inner Shadows (Overlay)
     if (innerShadows.length > 0) {
         xml += `    <!-- ⚠️ Inner Shadow approximation -->\n`;
         innerShadows.forEach(shadow => {
-            // A common hack is a stroke with a gradient, but that's complex.
-            // We'll just put a placeholder item or a translucent overlay.
             xml += `    <item>\n`;
              xml += `        <shape android:shape="rectangle">\n`;
              xml += `             <stroke android:width="1dp" android:color="${toAndroidHex(shadow.color)}" />\n`;
