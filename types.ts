@@ -1,28 +1,29 @@
 export enum GradientType {
   Linear = 'linear',
   Radial = 'radial',
-  Angular = 'angular', // Not fully supported in Android XML without hacks
+  Angular = 'angular',
 }
 
 export interface ColorStop {
-  color: string; // rgba or hex
-  position: number; // 0 to 100 (can be negative or >100)
+  color: string;
+  position: number;
 }
 
 export interface Gradient {
   type: GradientType;
   stops: ColorStop[];
-  angle?: number; // For linear: degrees (0-360) used for Android Calc
-  center?: { x: number; y: number }; // For radial
-  rawGeometry?: string; // The CSS string defining position/size (e.g. "180deg" or "50% 50% at 50% 50%")
+  angle?: number;
+  center?: { x: number; y: number };
+  rawGeometry?: string;
 }
 
 export interface Fill {
-  type: 'solid' | 'gradient';
-  value: string | Gradient; // Hex string for solid, Gradient obj for gradient
+  type: 'solid' | 'gradient' | 'noise' | 'texture';
+  value: string | Gradient;
   opacity?: number;
   blendMode?: string;
   visible: boolean;
+  assetUrl?: string; // For textures/noise exported as images
 }
 
 export interface Shadow {
@@ -42,13 +43,14 @@ export interface Corners {
   bottomLeft: number;
 }
 
-// The Intermediate Representation (IR) of the Figma Layer
 export interface FigmaLayer {
   name: string;
   width: number;
   height: number;
   fills: Fill[];
-  corners: Corners | number; // Number if uniform
+  corners: Corners | number;
   shadows: Shadow[];
   opacity: number;
+  blur?: number; // Layer blur (filter: blur)
+  backdropBlur?: number; // Background blur (backdrop-filter: blur)
 }
