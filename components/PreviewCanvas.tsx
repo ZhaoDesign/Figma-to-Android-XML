@@ -16,7 +16,6 @@ const renderGradient = (g: Gradient): string => {
   const centerY = g.center?.y ?? 50;
 
   if (g.type === GradientType.Angular) {
-      // For basic background fallback if scaling isn't used
       const angle = g.angle !== undefined ? `${g.angle}deg` : '0deg';
       return `conic-gradient(from ${angle} at ${centerX}% ${centerY}%, ${stopsStr})`;
   }
@@ -87,9 +86,12 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
               
               if (isAngular) {
                   const g = fill.value as Gradient;
-                  const maxDim = Math.max(data.width, data.height);
-                  const scaleY = data.height / maxDim;
-                  const scaleX = data.width / maxDim;
+                  // To create the "squashed" ellipse effect:
+                  // 1. Create a large square background that encompasses the furthest corner
+                  // 2. Scale it non-uniformly to match the aspect ratio of the layer
+                  const maxDim = Math.max(data.width, data.height) * 2;
+                  const scaleY = data.height / data.width; 
+                  
                   const stopsStr = g.stops
                     .sort((a, b) => a.position - b.position)
                     .map(s => `${s.color} ${s.position}%`)
@@ -101,15 +103,19 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
                   return (
                     <div key={index} style={{
                         position: 'absolute',
-                        top: '50%',
-                        left: '50%',
+                        // We align the square's center with the calculated gradient center in the layer
+                        left: `${centerX}%`,
+                        top: `${centerY}%`,
                         width: maxDim,
                         height: maxDim,
-                        // Move to center, apply scale to squash, then handle the relative position
-                        transform: `translate(-50%, -50%) scale(${scaleX}, ${scaleY})`,
-                        background: `conic-gradient(from ${angle} at ${centerX}% ${centerY}%, ${stopsStr})`,
+                        // CSS conic-gradient center is relative to the element itself, 
+                        // so we center it at 50% 50% of the square
+                        background: `conic-gradient(from ${angle} at 50% 50%, ${stopsStr})`,
+                        // transform: center the square on the coordinate, then scale Y to squash it
+                        transform: `translate(-50%, -50%) scaleY(${scaleY})`,
                         opacity: fill.opacity ?? 1,
-                        mixBlendMode: (fill.blendMode as any) || 'normal'
+                        mixBlendMode: (fill.blendMode as any) || 'normal',
+                        pointerEvents: 'none'
                     }} />
                   );
               }

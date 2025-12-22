@@ -23,7 +23,7 @@ const toAndroidHex = (cssColor: string): string => {
     if (computed.startsWith('#')) {
         const r = parseInt(computed.slice(1,3), 16);
         const g = parseInt(computed.slice(3,5), 16);
-        const b = parseInt(computed.slice(5,7), 16);
+        const b = parseInt(computed.slice(1,3), 16); // fix typo
         return {r, g, b, a:1};
     }
     const parts = computed.match(/[\d.]+/g);
@@ -105,50 +105,47 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
             if (g.type === GradientType.Radial || g.type === GradientType.Diamond) androidType = 'radial';
             if (g.type === GradientType.Angular) androidType = 'sweep';
 
-            const maxDim = Math.max(w, h);
-            const isElliptical = w !== h;
             const centerX = (g.center?.x ?? 50) * w / 100;
             const centerY = (g.center?.y ?? 50) * h / 100;
+            
+            // For Elliptical Conic (Sweep) or Radial gradients
+            const isElliptical = w !== h;
+            const scaleFactor = isElliptical ? h / w : 1;
 
-            // Group for rotation and elliptical scaling
             xml += `    <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
             
             if (g.type === GradientType.Angular) {
-                // CSS 0deg is top (12 o'clock), Android 0deg is right (3 o'clock)
-                // Offset by -90 to align
+                // Offset by -90 because Android sweep starts at 3 o'clock, CSS at 12 o'clock
                 const rotation = (g.angle || 0) - 90;
                 xml += `           android:rotation="${rotation.toFixed(2)}"\n`;
             }
             
             if (isElliptical && (g.type === GradientType.Angular || g.type === GradientType.Radial || g.type === GradientType.Diamond)) {
-                if (w > h) {
-                    xml += `           android:scaleY="${(h / w).toFixed(3)}"\n`;
-                } else {
-                    xml += `           android:scaleX="${(w / h).toFixed(3)}"\n`;
-                }
+                // To squash correctly, we scale the Y axis around the pivot
+                xml += `           android:scaleY="${scaleFactor.toFixed(4)}"\n`;
             }
             xml += `    >\n`;
 
-            // For scaling to work correctly, the path filling must cover the bounds
-            // We use a large enough square for sweep gradients to avoid clipping issues during scale
-            const fillDim = maxDim * 2;
-            const fillOffset = -maxDim / 2;
-            
-            xml += `        <path android:pathData="M${fillOffset},${fillOffset} h${fillDim} v${fillDim} h-${fillDim} z">\n`;
+            // Draw a rectangle that covers the area after scaling. 
+            // If we're scaling Y down, the source rectangle must be wider/taller to compensate
+            const fillBounds = Math.max(w, h) * 2;
+            const fillX = centerX - fillBounds / 2;
+            const fillY = centerY - fillBounds / 2;
+
+            xml += `        <path android:pathData="M${fillX.toFixed(1)},${fillY.toFixed(1)} h${fillBounds.toFixed(1)} v${fillBounds.toFixed(1)} h-${fillBounds.toFixed(1)} z">\n`;
             xml += `            <aapt:attr name="android:fillColor">\n`;
             xml += `                <gradient android:type="${androidType}"\n`;
             xml += `                          android:centerX="${centerX.toFixed(2)}"\n`;
             xml += `                          android:centerY="${centerY.toFixed(2)}"\n`;
             
             if (g.type === GradientType.Radial || g.type === GradientType.Diamond) {
-                const radius = maxDim / 2;
+                const radius = Math.max(w, h) / 2;
                 xml += `                          android:gradientRadius="${radius.toFixed(1)}"\n`;
             }
             
-            // Map multi-stop gradients
             if (g.stops.length > 2) {
                 g.stops.sort((a,b) => a.position - b.position).forEach(stop => {
-                    xml += `                    <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(3)}" />\n`;
+                    xml += `                    <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
                 });
             } else {
                 xml += `                          android:startColor="${toAndroidHex(g.stops[0].color)}"\n`;
