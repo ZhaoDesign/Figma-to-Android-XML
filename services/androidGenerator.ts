@@ -6,8 +6,6 @@ const toAndroidHex = (cssColor: string, forceRgbFrom?: string): string => {
   const getRgba = (c: string) => {
     // Create a dummy element/canvas to normalize color string (handles named colors, rgb, hsl, hex)
     if (c.startsWith('#') && c.length === 9) {
-        // Already #AARRGGBB (our internal format mostly) or #RRGGBBAA? 
-        // CSS usually uses #RRGGBBAA.
         const r = parseInt(c.slice(1,3), 16);
         const g = parseInt(c.slice(3,5), 16);
         const b = parseInt(c.slice(5,7), 16);
@@ -19,7 +17,7 @@ const toAndroidHex = (cssColor: string, forceRgbFrom?: string): string => {
     const ctx = document.createElement('canvas').getContext('2d');
     if (!ctx) return {r:0,g:0,b:0,a:1};
     ctx.fillStyle = c;
-    let computed = ctx.fillStyle; // returns #RRGGBB or rgba()
+    let computed = ctx.fillStyle; 
     
     if (computed.startsWith('#')) {
        const r = parseInt(computed.slice(1,3), 16);
@@ -39,13 +37,13 @@ const toAndroidHex = (cssColor: string, forceRgbFrom?: string): string => {
   const current = getRgba(cssColor);
   
   // 2. "Muddy Gray" Fix:
-  // If this color is fully transparent (alpha=0), Android interpolates it as Black Transparent (#00000000).
-  // If blending with Red, it goes Red -> Dark Red -> Gray -> Transparent.
-  // We want Red -> Transparent Red.
-  // So if alpha is 0, we use the RGB from 'forceRgbFrom' if provided.
-  if (current.a <= 0.01 && forceRgbFrom) {
+  // ONLY if the color is fully transparent AND it is Black (R=0,G=0,B=0).
+  // If the designer specified "rgba(2, 97, 255, 0)", they probably WANT the blue tint in the transition.
+  // We shouldn't force that to become Red -> Transparent Red.
+  const isTransparentBlack = current.a <= 0.01 && (current.r + current.g + current.b) < 10;
+
+  if (isTransparentBlack && forceRgbFrom) {
       const neighbor = getRgba(forceRgbFrom);
-      // Return neighbor's RGB with 00 Alpha
       const toHex = (n: number) => Math.round(n).toString(16).padStart(2, '0').toUpperCase();
       return `#00${toHex(neighbor.r)}${toHex(neighbor.g)}${toHex(neighbor.b)}`;
   }
@@ -57,7 +55,6 @@ const toAndroidHex = (cssColor: string, forceRgbFrom?: string): string => {
 };
 
 const parseColorToRgba = (color: string): {r: number, g: number, b: number, a: number} => {
-    // simplified for interpolation usage
     const ctx = document.createElement('canvas').getContext('2d');
     if (!ctx) return {r:0,g:0,b:0,a:1};
     ctx.fillStyle = color;
@@ -121,6 +118,41 @@ const mapAngle = (cssDeg: number): number => {
   return android % 360;
 };
 
+const parsePosition = (posStr: string): { x: number, y: number } | null => {
+    if (!posStr) return null;
+    const parts = posStr.trim().split(/\s+/);
+    
+    // Helper for keywords
+    const mapKeyword = (k: string) => {
+        if (k === 'center') return 0.5;
+        if (k === 'left' || k === 'top') return 0.0;
+        if (k === 'right' || k === 'bottom') return 1.0;
+        return null;
+    };
+
+    let x = 0.5;
+    let y = 0.5;
+
+    // Helper to parse value
+    const parseVal = (val: string, isX: boolean) => {
+        const num = parseFloat(val);
+        if (!isNaN(num)) return num / 100;
+        const k = mapKeyword(val);
+        if (k !== null) return k;
+        return 0.5;
+    }
+
+    if (parts.length === 1) {
+        x = parseVal(parts[0], true);
+        y = 0.5; // If only one value is given, the second is assumed center
+    } else if (parts.length >= 2) {
+         x = parseVal(parts[0], true);
+         y = parseVal(parts[1], false);
+    }
+    
+    return { x, y };
+};
+
 const generateCorners = (corners: Corners | number): string => {
   if (typeof corners === 'number') {
     if (corners === 0) return '';
@@ -136,20 +168,12 @@ const generateCorners = (corners: Corners | number): string => {
 const generateGradient = (gradient: Gradient): string => {
   const { angle = 180, stops, type, rawGeometry } = gradient;
   
-  // --- Smart Transparency Fix ---
-  // If the start or end colors are transparent, we need to "borrow" the RGB from the center/adjacent colors
-  // so Android interpolates opacity only, not color.
-  
   const rawStart = getColorAtPosition(stops, 0);
   const rawEnd = getColorAtPosition(stops, 100);
-  const rawCenter = getColorAtPosition(stops, 50); // Sample middle for reference
+  const rawCenter = getColorAtPosition(stops, 50);
 
-  // If Start is transparent, borrow RGB from Center (or End)
   const startColor = toAndroidHex(rawStart, rawCenter);
-  // If End is transparent, borrow RGB from Center (or Start)
   const endColor = toAndroidHex(rawEnd, rawCenter);
-  
-  // For Center, just use as is
   const centerHex = toAndroidHex(rawCenter);
 
   let centerAttr = '';
@@ -162,41 +186,56 @@ const generateGradient = (gradient: Gradient): string => {
   
   if (type === GradientType.Radial) {
     typeAttr = 'android:type="radial"';
-    
-    // Heuristic for Gradient Radius based on CSS geometry
-    let radiusVal = "75%p"; // Default
-    
+    let radiusVal = "75%p";
+    let cxAttr = "";
+    let cyAttr = "";
+
     if (rawGeometry) {
-        // Match percentage or pixel values.
-        // Support "100% 50%" (ellipse) or "150px" or "100%"
-        const matches = rawGeometry.match(/(\d+(?:\.\d+)?)(%|px)/g);
-        
-        if (matches && matches.length > 0) {
-            // Take the largest dimension found to ensure coverage
-            let maxVal = 0;
-            let unit = '%';
-            
-            matches.forEach(m => {
-                const val = parseFloat(m); // extracts number
+         // Syntax: [size] [at position]
+         // e.g. "67% 100% at 85% 100%"
+         const atIndex = rawGeometry.indexOf('at ');
+         let sizePart = rawGeometry;
+         let posPart = "";
+         
+         if (atIndex !== -1) {
+             sizePart = rawGeometry.substring(0, atIndex).trim();
+             posPart = rawGeometry.substring(atIndex + 3).trim();
+         }
+
+         // Parse Position -> centerX, centerY
+         if (posPart) {
+             const pos = parsePosition(posPart);
+             if (pos) {
+                 cxAttr = `android:centerX="${pos.x.toFixed(4)}"`;
+                 cyAttr = `android:centerY="${pos.y.toFixed(4)}"`;
+             }
+         }
+
+         // Parse Size -> gradientRadius
+         // Handle "67% 100%" -> Max(67, 100) -> 100%
+         const matches = sizePart.match(/(\d+(?:\.\d+)?)(%|px)/g);
+         if (matches && matches.length > 0) {
+             let maxVal = 0;
+             let unit = '%p';
+             matches.forEach(m => {
+                const val = parseFloat(m);
                 if (m.includes('%')) {
-                   if (val > maxVal) { maxVal = val; unit = '%p'; } // Android uses %p for parent relative
-                } else if (m.includes('px')) {
-                   // px is harder to map to %p without context, but let's assume if it's huge, we use it as dp?
-                   // No, Android gradientRadius can be dimension (dp) or %p.
-                   if (val > maxVal) { maxVal = val; unit = 'dp'; } 
+                    if (val > maxVal) { maxVal = val; unit = '%p'; }
+                } else {
+                    // px
+                    if (val > maxVal) { maxVal = val; unit = 'dp'; } 
                 }
-            });
-            
-            // Limit insane values
-            if (unit === '%p') {
-                radiusVal = `${Math.min(maxVal, 200)}%p`;
-            } else {
-                radiusVal = `${Math.round(maxVal)}dp`;
-            }
-        }
+             });
+             if (maxVal > 0) {
+                 radiusVal = `${Math.round(maxVal)}${unit}`;
+             }
+         }
     }
     
-    angleAttr = `android:gradientRadius="${radiusVal}"`; 
+    // Add newlines only if attributes exist to keep code clean
+    const cxStr = cxAttr ? `\n        ${cxAttr}` : '';
+    const cyStr = cyAttr ? `\n        ${cyAttr}` : '';
+    angleAttr = `android:gradientRadius="${radiusVal}"${cxStr}${cyStr}`; 
   } else {
     const androidAngle = mapAngle(angle);
     angleAttr = `android:angle="${androidAngle}"`;
@@ -233,10 +272,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
         });
     }
 
-    // Fills
-    // Android draws top-down (last item is on top).
-    // layer.fills[0] is Figma Top.
-    // So we reverse it: [Bottom, ..., Top].
+    // Fills - Reverse order for Android Z-indexing
     const reversedFills = [...layer.fills].reverse();
     
     reversedFills.forEach((fill) => {
