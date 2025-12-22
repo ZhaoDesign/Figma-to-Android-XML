@@ -60,9 +60,16 @@ const parseGradient = (gradientStr: string): Gradient | null => {
     // Valid linear angle formats: "180deg", "to right", "to bottom right"
     isGeometry = firstPartLower.includes('deg') || firstPartLower.includes('to ') || !!firstPartLower.match(/^\d+(\.\d+)?(turn|rad|grad)$/);
   } else {
-    // Valid radial geometry: "circle at ...", "50% 50% at ...", "at top left"
-    // Figma usually outputs: "50% 50% at 50% 50%" or just coordinates
-    isGeometry = firstPartLower.includes('at ') || firstPartLower.includes('circle') || firstPartLower.includes('ellipse');
+    // Valid radial geometry: 
+    // 1. "circle at ...", "at top left" (Keywords)
+    // 2. "50% 50% at ..." (Size + at)
+    // 3. "50% 50%" (Size only - Figma often exports this if 'at center' is implied or omitted)
+    const hasKeyword = /^(circle|ellipse|closest|farthest)/.test(firstPartLower);
+    const hasAt = firstPartLower.includes('at ');
+    // If it starts with a number, it's likely a size/dimension (e.g. 50% 50%), unless it's a color (unlikely for colors to start with digits except partial hex which isn't valid here)
+    const startsWithNumber = /^[\d.]/.test(firstPartLower);
+    
+    isGeometry = hasKeyword || hasAt || startsWithNumber;
   }
 
   if (isGeometry) {
@@ -129,8 +136,15 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   tempDiv.style.display = 'none';
   document.body.appendChild(tempDiv);
 
+  // 1. Clean comments /* ... */
   let cleanText = text.replace(/\/\*[\s\S]*?\*\//g, '');
-  cleanText = cleanText.replace(/[{}]/g, '').replace(/\n/g, ';');
+  
+  // 2. Normalize format
+  // CRITICAL FIX: Replace newlines with SPACE, not semicolon. 
+  // Replacing with semicolon breaks CSS functions like `radial-gradient(\n...)` -> `radial-gradient(;...)`.
+  // We only want semicolons to separate properties.
+  // Standard CSS syntax allows newlines as whitespace.
+  cleanText = cleanText.replace(/[{}]/g, '').replace(/\n/g, ' ');
   
   if (!cleanText.includes(':')) {
     const trimmed = cleanText.trim();
