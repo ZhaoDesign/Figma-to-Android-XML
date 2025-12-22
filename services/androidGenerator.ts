@@ -2,9 +2,7 @@ import { FigmaLayer, Fill, Gradient, GradientType, ColorStop, Corners, Shadow } 
 
 // Android Hex is #AARRGGBB
 const toAndroidHex = (cssColor: string, forceRgbFrom?: string): string => {
-  // 1. Helper to get RGBA from string
   const getRgba = (c: string) => {
-    // Create a dummy element/canvas to normalize color string (handles named colors, rgb, hsl, hex)
     if (c.startsWith('#') && c.length === 9) {
         const r = parseInt(c.slice(1,3), 16);
         const g = parseInt(c.slice(3,5), 16);
@@ -12,8 +10,6 @@ const toAndroidHex = (cssColor: string, forceRgbFrom?: string): string => {
         const a = parseInt(c.slice(7,9), 16) / 255;
         return {r,g,b,a};
     }
-    
-    // Fallback parsing
     const ctx = document.createElement('canvas').getContext('2d');
     if (!ctx) return {r:0,g:0,b:0,a:1};
     ctx.fillStyle = c;
@@ -36,30 +32,24 @@ const toAndroidHex = (cssColor: string, forceRgbFrom?: string): string => {
 
   const current = getRgba(cssColor);
   
-  // 2. "Muddy Gray" Fix:
-  // ONLY if the color is fully transparent AND it is Black (R=0,G=0,B=0).
-  // If the designer specified "rgba(2, 97, 255, 0)", they probably WANT the blue tint in the transition.
-  // We shouldn't force that to become Red -> Transparent Red.
+  // "Muddy Gray" Fix
   const isTransparentBlack = current.a <= 0.01 && (current.r + current.g + current.b) < 10;
-
   if (isTransparentBlack && forceRgbFrom) {
       const neighbor = getRgba(forceRgbFrom);
       const toHex = (n: number) => Math.round(n).toString(16).padStart(2, '0').toUpperCase();
       return `#00${toHex(neighbor.r)}${toHex(neighbor.g)}${toHex(neighbor.b)}`;
   }
 
-  // Standard Return #AARRGGBB
   const alphaInt = Math.round(current.a * 255);
   const toHex = (n: number) => Math.round(n).toString(16).padStart(2, '0').toUpperCase();
   return `#${toHex(alphaInt)}${toHex(current.r)}${toHex(current.g)}${toHex(current.b)}`;
 };
 
-const parseColorToRgba = (color: string): {r: number, g: number, b: number, a: number} => {
+const parseColorToRgba = (color: string) => {
     const ctx = document.createElement('canvas').getContext('2d');
     if (!ctx) return {r:0,g:0,b:0,a:1};
     ctx.fillStyle = color;
     const computed = ctx.fillStyle;
-    
     if (computed.startsWith('#')) {
         const r = parseInt(computed.slice(1,3), 16);
         const g = parseInt(computed.slice(3,5), 16);
@@ -68,10 +58,7 @@ const parseColorToRgba = (color: string): {r: number, g: number, b: number, a: n
     }
     const match = computed.match(/rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\)/);
     if(match) {
-        return {
-            r: parseInt(match[1]), g: parseInt(match[2]), b: parseInt(match[3]),
-            a: match[4] ? parseFloat(match[4]) : 1
-        };
+        return { r: parseInt(match[1]), g: parseInt(match[2]), b: parseInt(match[3]), a: match[4] ? parseFloat(match[4]) : 1 };
     }
     return {r:0,g:0,b:0,a:1};
 };
@@ -108,7 +95,6 @@ const getColorAtPosition = (stops: ColorStop[], targetPos: number): string => {
 
 const mapAngle = (cssDeg: number): number => {
   let android = (450 - cssDeg) % 360;
-  // Snap to nearest 45
   const remainder = android % 45;
   if (remainder < 22.5) {
     android = android - remainder;
@@ -118,40 +104,7 @@ const mapAngle = (cssDeg: number): number => {
   return android % 360;
 };
 
-const parsePosition = (posStr: string): { x: number, y: number } | null => {
-    if (!posStr) return null;
-    const parts = posStr.trim().split(/\s+/);
-    
-    // Helper for keywords
-    const mapKeyword = (k: string) => {
-        if (k === 'center') return 0.5;
-        if (k === 'left' || k === 'top') return 0.0;
-        if (k === 'right' || k === 'bottom') return 1.0;
-        return null;
-    };
-
-    let x = 0.5;
-    let y = 0.5;
-
-    // Helper to parse value
-    const parseVal = (val: string, isX: boolean) => {
-        const num = parseFloat(val);
-        if (!isNaN(num)) return num / 100;
-        const k = mapKeyword(val);
-        if (k !== null) return k;
-        return 0.5;
-    }
-
-    if (parts.length === 1) {
-        x = parseVal(parts[0], true);
-        y = 0.5; // If only one value is given, the second is assumed center
-    } else if (parts.length >= 2) {
-         x = parseVal(parts[0], true);
-         y = parseVal(parts[1], false);
-    }
-    
-    return { x, y };
-};
+// --- Shape XML Generation Helper ---
 
 const generateCorners = (corners: Corners | number): string => {
   if (typeof corners === 'number') {
@@ -165,7 +118,7 @@ const generateCorners = (corners: Corners | number): string => {
         android:bottomRightRadius="${corners.bottomRight}dp" />\n`;
 };
 
-const generateGradient = (gradient: Gradient, layerWidth: number, layerHeight: number): string => {
+const generateShapeGradient = (gradient: Gradient, layerWidth: number, layerHeight: number): string => {
   const { angle = 180, stops, type, rawGeometry } = gradient;
   
   const rawStart = getColorAtPosition(stops, 0);
@@ -191,61 +144,39 @@ const generateGradient = (gradient: Gradient, layerWidth: number, layerHeight: n
     let cyAttr = "";
 
     if (rawGeometry) {
-         // Syntax: [size] [at position]
-         // e.g. "67% 100% at 85% 100%"
          const atIndex = rawGeometry.indexOf('at ');
          let sizePart = rawGeometry;
          let posPart = "";
-         
          if (atIndex !== -1) {
              sizePart = rawGeometry.substring(0, atIndex).trim();
              posPart = rawGeometry.substring(atIndex + 3).trim();
          }
 
-         // 1. Parse Position -> centerX, centerY
          if (posPart) {
-             const pos = parsePosition(posPart);
+             const pos = parsePositionKeyword(posPart);
              if (pos) {
                  cxAttr = `android:centerX="${pos.x.toFixed(4)}"`;
                  cyAttr = `android:centerY="${pos.y.toFixed(4)}"`;
              }
          }
 
-         // 2. Parse Size -> gradientRadius
-         // This is the tricky part. Figma "dots" allow Ellipses (W != H). Android is Circle.
-         // If we use %p, Android applies it to the View's dimension (often width).
-         // Figma: "67% 100%" means 67% of Width, 100% of Height.
-         // On a 300x50 button: W_R = 200px, H_R = 50px.
-         // If we use %p (e.g. 67%p), Android might make a 200px Circle.
-         // A 200px circle is HUGE vertically (4x the button height). This looks wrong (too big).
-         // To emulate the "visual weight" of a squashed ellipse, we should calculate the effective pixel size
-         // and average it, then export as 'dp'.
-         
          const matches = sizePart.match(/(\d+(?:\.\d+)?)(%|px)/g);
          if (matches && matches.length > 0) {
              let radiiPx: number[] = [];
-             
              matches.forEach((m, index) => {
                 const val = parseFloat(m);
-                // First value is Width, Second is Height (CSS standard)
-                // If only one, it's uniform.
                 const isWidth = matches.length === 1 || index === 0;
-                
                 if (m.includes('%')) {
                     const base = isWidth ? layerWidth : layerHeight;
                     radiiPx.push((val / 100) * base);
                 } else {
-                    // px
                     radiiPx.push(val);
                 }
              });
-
-             // Calculate average radius in pixels to convert Ellipse -> Circle representation
+             // Geometric mean might be better for "area" coverage, but average is safer for now.
              if (radiiPx.length > 0) {
                  const sum = radiiPx.reduce((a, b) => a + b, 0);
                  const avgPx = sum / radiiPx.length;
-                 
-                 // If the computed radius is super small (invalid), fallback.
                  if (avgPx > 1) {
                     radiusVal = `${Math.round(avgPx)}dp`;
                  }
@@ -253,7 +184,6 @@ const generateGradient = (gradient: Gradient, layerWidth: number, layerHeight: n
          }
     }
     
-    // Add newlines only if attributes exist to keep code clean
     const cxStr = cxAttr ? `\n        ${cxAttr}` : '';
     const cyStr = cyAttr ? `\n        ${cyAttr}` : '';
     angleAttr = `android:gradientRadius="${radiusVal}"${cxStr}${cyStr}`; 
@@ -269,20 +199,18 @@ const generateGradient = (gradient: Gradient, layerWidth: number, layerHeight: n
         android:endColor="${endColor}" />\n`;
 };
 
-export const generateAndroidXML = (layer: FigmaLayer): string => {
+const generateShapeXML = (layer: FigmaLayer): string => {
   let xml = `<?xml version="1.0" encoding="utf-8"?>\n<!-- Generated from Figma -->\n`;
-  
   const needsLayerList = layer.fills.length > 1 || layer.shadows.length > 0;
   
   if (needsLayerList) {
     xml += `<layer-list xmlns:android="http://schemas.android.com/apk/res/android">\n`;
     
-    // Shadows
     const dropShadows = layer.shadows.filter(s => s.type === 'drop' && s.visible);
     const innerShadows = layer.shadows.filter(s => s.type === 'inner' && s.visible);
     
     if (dropShadows.length > 0) {
-        xml += `    <!-- ⚠️ Note: Drop Shadows in XML are approximations. Prefer android:elevation on the View. -->\n`;
+        xml += `    <!-- ⚠️ Note: Drop Shadows in XML are approximations. -->\n`;
         dropShadows.forEach((shadow) => {
              xml += `    <item android:left="${shadow.x}dp" android:top="${shadow.y}dp">\n`;
              xml += `        <shape android:shape="rectangle">\n`;
@@ -293,9 +221,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
         });
     }
 
-    // Fills - Reverse order for Android Z-indexing
     const reversedFills = [...layer.fills].reverse();
-    
     reversedFills.forEach((fill) => {
         if (!fill.visible) return;
         xml += `    <item>\n`;
@@ -304,15 +230,13 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
         if (fill.type === 'solid') {
             xml += `            <solid android:color="${toAndroidHex(fill.value as string)}" />\n`;
         } else {
-            // Pass layer dimensions for calculating radius
-            xml += generateGradient(fill.value as Gradient, layer.width, layer.height);
+            xml += generateShapeGradient(fill.value as Gradient, layer.width, layer.height);
         }
         xml += generateCorners(layer.corners);
         xml += `        </shape>\n`;
         xml += `    </item>\n`;
     });
     
-    // Inner Shadows
     if (innerShadows.length > 0) {
         innerShadows.forEach(shadow => {
             xml += `    <item>\n`;
@@ -326,19 +250,252 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
     xml += `</layer-list>`;
     
   } else {
-    // Simple Shape
     xml += `<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">\n`;
     const fill = layer.fills[0];
     if (fill) {
          if (fill.type === 'solid') {
             xml += `    <solid android:color="${toAndroidHex(fill.value as string)}" />\n`;
         } else {
-            xml += generateGradient(fill.value as Gradient, layer.width, layer.height);
+            xml += generateShapeGradient(fill.value as Gradient, layer.width, layer.height);
         }
     }
     xml += generateCorners(layer.corners);
     xml += `</shape>`;
   }
-  
   return xml;
+};
+
+// --- Vector XML Generation (For Advanced Elliptical Gradients) ---
+
+const parsePositionKeyword = (posStr: string): { x: number, y: number } | null => {
+    if (!posStr) return null;
+    const parts = posStr.trim().split(/\s+/);
+    
+    const mapKeyword = (k: string) => {
+        if (k === 'center') return 0.5;
+        if (k === 'left' || k === 'top') return 0.0;
+        if (k === 'right' || k === 'bottom') return 1.0;
+        return null;
+    };
+    const parseVal = (val: string) => {
+        const num = parseFloat(val);
+        if (!isNaN(num)) return num / 100;
+        const k = mapKeyword(val);
+        return k !== null ? k : 0.5;
+    }
+
+    if (parts.length === 1) {
+        return { x: parseVal(parts[0]), y: 0.5 };
+    } else if (parts.length >= 2) {
+         return { x: parseVal(parts[0]), y: parseVal(parts[1]) };
+    }
+    return { x: 0.5, y: 0.5 };
+};
+
+const getRoundedRectPath = (w: number, h: number, corners: Corners | number): string => {
+    // Generate Path Data for a Rounded Rectangle
+    // Simplification: Using max uniform radius for path if object provided, or per-corner if ambitious.
+    // Let's stick to uniform/max to keep string length sane for now, or implement full logic.
+    let rTopLeft = 0, rTopRight = 0, rBottomRight = 0, rBottomLeft = 0;
+    
+    if (typeof corners === 'number') {
+        rTopLeft = rTopRight = rBottomRight = rBottomLeft = corners;
+    } else {
+        rTopLeft = corners.topLeft;
+        rTopRight = corners.topRight;
+        rBottomRight = corners.bottomRight;
+        rBottomLeft = corners.bottomLeft;
+    }
+
+    // SVG Path Command for Rounded Rect
+    // M x+r, y
+    // L w-r, y
+    // A r,r 0 0 1 w, y+r
+    // L w, h-r
+    // A r,r 0 0 1 w-r, h
+    // L x+r, h
+    // A r,r 0 0 1 x, h-r
+    // L x, y+r
+    // A r,r 0 0 1 x+r, y
+    // Z
+    
+    const p = (val: number) => Math.round(val * 100) / 100; // precision
+
+    return `M${p(rTopLeft)},0 ` +
+           `H${p(w - rTopRight)} ` +
+           `A${p(rTopRight)},${p(rTopRight)} 0 0 1 ${p(w)},${p(rTopRight)} ` +
+           `V${p(h - rBottomRight)} ` +
+           `A${p(rBottomRight)},${p(rBottomRight)} 0 0 1 ${p(w - rBottomRight)},${p(h)} ` +
+           `H${p(rBottomLeft)} ` +
+           `A${p(rBottomLeft)},${p(rBottomLeft)} 0 0 1 0,${p(h - rBottomLeft)} ` +
+           `V${p(rTopLeft)} ` +
+           `A${p(rTopLeft)},${p(rTopLeft)} 0 0 1 ${p(rTopLeft)},0 ` +
+           `Z`;
+};
+
+const generateVectorXML = (layer: FigmaLayer): string => {
+    const w = Math.round(layer.width);
+    const h = Math.round(layer.height);
+    
+    let xml = `<?xml version="1.0" encoding="utf-8"?>\n`;
+    xml += `<!-- Generated from Figma (Vector Mode for Elliptical Gradients) -->\n`;
+    xml += `<vector xmlns:android="http://schemas.android.com/apk/res/android"\n`;
+    xml += `    xmlns:aapt="http://schemas.android.com/aapt"\n`;
+    xml += `    android:width="${w}dp"\n`;
+    xml += `    android:height="${h}dp"\n`;
+    xml += `    android:viewportWidth="${w}"\n`;
+    xml += `    android:viewportHeight="${h}">\n`;
+
+    // 1. Clip Path (To enforce rounded corners on all content)
+    const clipPathData = getRoundedRectPath(w, h, layer.corners);
+    xml += `    <clip-path android:pathData="${clipPathData}" />\n`;
+
+    // 2. Render Fills (Bottom up)
+    const reversedFills = [...layer.fills].reverse();
+
+    reversedFills.forEach((fill, index) => {
+        if (!fill.visible) return;
+        
+        if (fill.type === 'solid') {
+            const hex = toAndroidHex(fill.value as string);
+            xml += `    <path\n`;
+            xml += `        android:pathData="M0,0 h${w} v${h} h-${w} z"\n`;
+            xml += `        android:fillColor="${hex}" />\n`;
+        } else {
+            const gradient = fill.value as Gradient;
+            const stops = gradient.stops;
+            const rawStart = getColorAtPosition(stops, 0);
+            const rawEnd = getColorAtPosition(stops, 100);
+            const rawCenter = getColorAtPosition(stops, 50);
+            
+            const startColor = toAndroidHex(rawStart, rawCenter);
+            const centerColor = toAndroidHex(rawCenter);
+            const endColor = toAndroidHex(rawEnd, rawCenter);
+
+            if (gradient.type === GradientType.Linear) {
+                // Linear Gradient in Vector
+                // Calculate coords based on angle
+                const angleRad = ((gradient.angle || 180) - 90) * (Math.PI / 180);
+                // Center
+                const cx = w/2;
+                const cy = h/2;
+                // Length of diagonal
+                const r = Math.sqrt(w*w + h*h) / 2;
+                
+                const startX = cx - r * Math.cos(angleRad);
+                const startY = cy - r * Math.sin(angleRad);
+                const endX = cx + r * Math.cos(angleRad);
+                const endY = cy + r * Math.sin(angleRad);
+                
+                xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z">\n`;
+                xml += `      <aapt:attr name="android:fillColor">\n`;
+                xml += `        <gradient\n`;
+                xml += `          android:type="linear"\n`;
+                xml += `          android:startX="${startX.toFixed(1)}"\n`;
+                xml += `          android:startY="${startY.toFixed(1)}"\n`;
+                xml += `          android:endX="${endX.toFixed(1)}"\n`;
+                xml += `          android:endY="${endY.toFixed(1)}"\n`;
+                xml += `          android:startColor="${startColor}"\n`;
+                if (stops.length > 2) xml += `          android:centerColor="${centerColor}"\n`;
+                xml += `          android:endColor="${endColor}" />\n`;
+                xml += `      </aapt:attr>\n`;
+                xml += `    </path>\n`;
+
+            } else {
+                // Radial Gradient (The Complex Part)
+                let scaleX = 1;
+                let scaleY = 1;
+                let centerX = 0.5;
+                let centerY = 0.5;
+                let radiusX = w/2;
+                let radiusY = h/2;
+
+                if (gradient.rawGeometry) {
+                     // Parse dimensions
+                     const matches = gradient.rawGeometry.match(/(\d+(?:\.\d+)?)(%|px)/g);
+                     if (matches && matches.length > 0) {
+                         matches.forEach((m, i) => {
+                             const val = parseFloat(m);
+                             const pxVal = m.includes('%') 
+                                ? (val/100) * (i===0 ? w : h) 
+                                : val;
+                             if (i === 0) radiusX = pxVal;
+                             if (i === 1 || matches.length === 1) radiusY = pxVal;
+                         });
+                     }
+                     // Parse position
+                     const atIndex = gradient.rawGeometry.indexOf('at ');
+                     if (atIndex !== -1) {
+                        const pos = parsePositionKeyword(gradient.rawGeometry.substring(atIndex + 3));
+                        if (pos) { centerX = pos.x; centerY = pos.y; }
+                     }
+                }
+                
+                // Vector Logic:
+                // We draw a UNIT circle (r=100) centered at 0,0.
+                // We apply a Group Transform to scale/translate it to the target ellipse.
+                const baseR = 100;
+                const sx = radiusX / baseR;
+                const sy = radiusY / baseR;
+                
+                const tx = centerX * w;
+                const ty = centerY * h;
+                
+                xml += `    <group\n`;
+                xml += `        android:translateX="${tx.toFixed(1)}"\n`;
+                xml += `        android:translateY="${ty.toFixed(1)}"\n`;
+                xml += `        android:scaleX="${sx.toFixed(4)}"\n`;
+                xml += `        android:scaleY="${sy.toFixed(4)}">\n`;
+                xml += `        <path\n`;
+                // Circle path of radius 100 centered at 0,0
+                xml += `            android:pathData="M 0,-100 A 100,100 0 1 1 0,100 A 100,100 0 1 1 0,-100"\n`; 
+                xml += `            >\n`;
+                xml += `          <aapt:attr name="android:fillColor">\n`;
+                xml += `            <gradient\n`;
+                xml += `              android:type="radial"\n`;
+                xml += `              android:centerX="0"\n`;
+                xml += `              android:centerY="0"\n`;
+                xml += `              android:gradientRadius="100"\n`;
+                xml += `              android:startColor="${startColor}"\n`;
+                if (stops.length > 2) xml += `              android:centerColor="${centerColor}"\n`;
+                xml += `              android:endColor="${endColor}" />\n`;
+                xml += `          </aapt:attr>\n`;
+                xml += `        </path>\n`;
+                xml += `    </group>\n`;
+            }
+        }
+    });
+
+    xml += `</vector>`;
+    return xml;
+};
+
+// --- Main Switcher ---
+
+const hasEllipticalGradient = (layer: FigmaLayer): boolean => {
+    return layer.fills.some(fill => {
+        if (fill.type !== 'gradient') return false;
+        const g = fill.value as Gradient;
+        if (g.type !== GradientType.Radial) return false;
+        if (!g.rawGeometry) return false;
+        
+        // Check for non-uniform size definitions (e.g., "67% 100%")
+        // Simple check: if it has two percentage/px values that are different
+        const matches = g.rawGeometry.match(/(\d+(?:\.\d+)?)(%|px)/g);
+        if (matches && matches.length >= 2) {
+             // If we have 2 explicit dimensions, we assume user might intend ellipse.
+             // We can check if they map to similar pixels, but let's be aggressive for fidelity.
+             return true; 
+        }
+        return false;
+    });
+};
+
+export const generateAndroidXML = (layer: FigmaLayer): string => {
+  // If the layer uses complex elliptical radial gradients, use VectorDrawable (API 24+)
+  // otherwise use standard Shape Drawable (API 21+)
+  if (hasEllipticalGradient(layer)) {
+      return generateVectorXML(layer);
+  }
+  return generateShapeXML(layer);
 };
