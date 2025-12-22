@@ -1,8 +1,8 @@
 import { FigmaLayer, Fill, Gradient, GradientType, ColorStop, Corners, Shadow } from '../types';
 
-const toAndroidHex = (cssColor: string, forceRgbFrom?: string): string => {
+const toAndroidHex = (cssColor: string): string => {
   const getRgba = (c: string) => {
-    if (c.startsWith('#') && (c.length === 7 || c.length === 9)) {
+    if (c.startsWith('#')) {
         let r, g, b, a = 1;
         if (c.length === 7) {
             r = parseInt(c.slice(1,3), 16);
@@ -21,7 +21,10 @@ const toAndroidHex = (cssColor: string, forceRgbFrom?: string): string => {
     ctx.fillStyle = c;
     const computed = ctx.fillStyle; 
     if (computed.startsWith('#')) {
-        return {r: parseInt(computed.slice(1,3), 16), g: parseInt(computed.slice(3,5), 16), b: parseInt(computed.slice(5,7), 16), a:1};
+        const r = parseInt(computed.slice(1,3), 16);
+        const g = parseInt(computed.slice(3,5), 16);
+        const b = parseInt(computed.slice(5,7), 16);
+        return {r, g, b, a:1};
     }
     const parts = computed.match(/[\d.]+/g);
     if (parts && parts.length >= 3) {
@@ -36,8 +39,8 @@ const toAndroidHex = (cssColor: string, forceRgbFrom?: string): string => {
 };
 
 const getRoundedRectPath = (w: number, h: number, corners: Corners | number, inset: number = 0): string => {
-    let rTL = 0, rTR = 0, rBR = 0, rBL = 0;
     const i = inset;
+    let rTL, rTR, rBR, rBL;
     if (typeof corners === 'number') {
         rTL = rTR = rBR = rBL = Math.max(0, corners - i);
     } else {
@@ -72,40 +75,30 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
     xml += `    android:width="${w}dp" android:height="${h}dp"\n`;
     xml += `    android:viewportWidth="${w}" android:viewportHeight="${h}">\n\n`;
 
-    // Blur Info
-    if (layer.backdropBlur) xml += `    <!-- Note: Backdrop Blur (${layer.backdropBlur}dp) requires RenderEffect API 31+ -->\n`;
-    if (layer.blur) xml += `    <!-- Note: Layer Blur (${layer.blur}dp) requires RenderEffect API 31+ -->\n`;
-
-    // 1. Drop Shadows (Rendered as offset paths)
+    // 1. Drop Shadows
     layer.shadows.filter(s => s.type === 'drop' && s.visible).forEach((s, idx) => {
         const shadowPath = getRoundedRectPath(w + s.spread * 2, h + s.spread * 2, layer.corners);
         xml += `    <!-- Drop Shadow ${idx + 1} -->\n`;
         xml += `    <group android:translateX="${s.x - s.spread}" android:translateY="${s.y - s.spread}">\n`;
         xml += `        <path android:pathData="${shadowPath}"\n`;
         xml += `              android:fillColor="${toAndroidHex(s.color)}"\n`;
-        xml += `              android:fillAlpha="${s.blur > 0 ? '0.6' : '1.0'}" />\n`;
+        xml += `              android:fillAlpha="${s.blur > 0 ? '0.4' : '1.0'}" />\n`;
         xml += `    </group>\n`;
     });
 
     // 2. Main Content Clipping
-    const mainClipPath = getRoundedRectPath(w, h, layer.corners);
-    xml += `    <clip-path android:pathData="${mainClipPath}" />\n\n`;
+    const mainPath = getRoundedRectPath(w, h, layer.corners);
+    xml += `    <clip-path android:pathData="${mainPath}" />\n\n`;
 
-    // 3. Fills (Bottom to Top)
+    // 3. Fills
     [...layer.fills].reverse().forEach((fill, idx) => {
         if (!fill.visible) return;
-        
-        xml += `    <!-- Fill Layer ${idx + 1}: ${fill.type.toUpperCase()} -->\n`;
-        if (fill.type === 'noise' || fill.type === 'texture') {
-            xml += `    <!-- Note: Textures require <bitmap> with tileMode="repeat" in a layer-list -->\n`;
-        }
-
+        xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z"\n`;
         if (fill.type === 'solid') {
-            xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z"\n`;
             xml += `          android:fillColor="${toAndroidHex(fill.value as string)}" />\n`;
         } else if (fill.type === 'gradient') {
             const g = fill.value as Gradient;
-            xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z">\n`;
+            xml += `          >\n`;
             xml += `        <aapt:attr name="android:fillColor">\n`;
             xml += `            <gradient android:type="${g.type === GradientType.Linear ? 'linear' : 'radial'}"\n`;
             xml += `                      android:startColor="${toAndroidHex(g.stops[0].color)}"\n`;
@@ -115,12 +108,13 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
         }
     });
 
-    // 4. Inner Shadows (Approximated with thick internal strokes)
+    // 4. Inner Shadows (Enhanced Simulation)
     layer.shadows.filter(s => s.type === 'inner' && s.visible).forEach((s, idx) => {
-        xml += `\n    <!-- Inner Shadow ${idx + 1} (Approximation) -->\n`;
-        // To simulate inner shadow, we draw a stroke along the clip path but offset inwards
-        xml += `    <path android:pathData="${mainClipPath}"\n`;
-        xml += `          android:strokeWidth="${s.blur * 2}"\n`;
+        const strokeWidth = s.blur > 0 ? s.blur * 2 : 2; // Use at least 2px stroke for visible hard shadows
+        xml += `\n    <!-- Inner Shadow ${idx + 1} Approximation -->\n`;
+        xml += `    <path android:pathData="${mainPath}"\n`;
+        xml += `          android:fillColor="#00000000"\n`; // CRITICAL: Prevent default black fill
+        xml += `          android:strokeWidth="${strokeWidth}"\n`;
         xml += `          android:strokeColor="${toAndroidHex(s.color)}"\n`;
         xml += `          android:translateX="${s.x}"\n`;
         xml += `          android:translateY="${s.y}" />\n`;
