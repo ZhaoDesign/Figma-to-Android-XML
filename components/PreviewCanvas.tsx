@@ -11,7 +11,18 @@ const renderGradient = (g: Gradient): string => {
     .sort((a, b) => a.position - b.position)
     .map(s => `${s.color} ${s.position}%`)
     .join(', ');
+
+  // If we captured the raw CSS geometry (e.g. "50% 50% at 50% 50%" or "180deg"), use it directly.
+  // This ensures the preview looks EXACTLY like Figma, even if the user dragged handles way outside the box.
+  if (g.rawGeometry) {
+    if (g.type === GradientType.Linear) {
+      return `linear-gradient(${g.rawGeometry}, ${stopsStr})`;
+    } else {
+      return `radial-gradient(${g.rawGeometry}, ${stopsStr})`;
+    }
+  }
     
+  // Fallback defaults if parsing missed the geometry
   if (g.type === GradientType.Linear) {
     return `linear-gradient(${g.angle || 180}deg, ${stopsStr})`;
   } else {
