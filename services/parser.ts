@@ -37,51 +37,32 @@ const parseGradient = (gradientStr: string): Gradient | null => {
 
   const content = gradientStr.substring(firstParen + 1, lastParen);
   const parts = splitCSSLayers(content);
-  if (parts.length === 0) return null;
-
+  
   let angle = 180;
   let stopsStartIndex = 0;
   let rawGeometry: string | undefined = undefined;
 
   const firstPart = parts[0];
   const firstPartLower = firstPart.toLowerCase();
-  let isGeometry = false;
-
-  if (isLinear) {
-    isGeometry = firstPartLower.includes('deg') || firstPartLower.includes('to ') || !!firstPartLower.match(/^\d+(\.\d+)?(turn|rad|grad)$/);
-  } else {
-    const keywords = ['circle', 'ellipse', 'at', 'center', 'top', 'bottom', 'left', 'right'];
-    isGeometry = keywords.some(k => firstPartLower.includes(k)) || /^[\d.]/.test(firstPartLower);
-  }
+  
+  const keywords = ['circle', 'ellipse', 'at', 'center', 'top', 'bottom', 'left', 'right', 'deg', 'to '];
+  const isGeometry = keywords.some(k => firstPartLower.includes(k));
 
   if (isGeometry) {
     stopsStartIndex = 1;
     rawGeometry = firstPart;
-    if (isLinear) {
-        if (firstPartLower.includes('deg')) {
-          angle = parseFloat(firstPartLower);
-        } else {
-          if (firstPartLower.includes('to top')) angle = 0;
-          else if (firstPartLower.includes('to right')) angle = 90;
-          else if (firstPartLower.includes('to bottom')) angle = 180;
-          else if (firstPartLower.includes('to left')) angle = 270;
-          else if (firstPartLower.includes('top') && firstPartLower.includes('right')) angle = 45;
-          else if (firstPartLower.includes('bottom') && firstPartLower.includes('right')) angle = 135;
-          else if (firstPartLower.includes('bottom') && firstPartLower.includes('left')) angle = 225;
-          else if (firstPartLower.includes('top') && firstPartLower.includes('left')) angle = 315;
-        }
+    if (isLinear && firstPartLower.includes('deg')) {
+      angle = parseFloat(firstPartLower);
     }
   }
 
   const stops: ColorStop[] = [];
-  const stopParts = parts.slice(stopsStartIndex);
-  stopParts.forEach((part, index) => {
+  parts.slice(stopsStartIndex).forEach((part, index, arr) => {
     const match = part.match(/^([\s\S]+?)(?:\s+(-?[\d.]+%?|-?[\d.]+px))?$/);
     if (match) {
       let colorStr = match[1].trim();
-      let positionStr = match[2];
-      let position = positionStr ? parseFloat(positionStr) : (index === 0 ? 0 : index === stopParts.length - 1 ? 100 : (index / (stopParts.length - 1)) * 100);
-      stops.push({ color: colorStr, position });
+      let position = match[2] ? parseFloat(match[2]) : (index / (arr.length - 1)) * 100;
+      stops.push({ color: colorStr, position: isNaN(position) ? 0 : position });
     }
   });
 
@@ -94,23 +75,19 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   document.body.appendChild(tempDiv);
 
   let cleanText = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/[{}]/g, '').replace(/\n/g, ' ');
-  if (!cleanText.includes(':')) {
-    const trimmed = cleanText.trim();
-    if (trimmed.startsWith('linear-gradient') || trimmed.startsWith('radial-gradient') || trimmed.startsWith('#') || trimmed.startsWith('rgb')) {
-      cleanText = `background: ${trimmed}`;
-    }
-  }
-
   tempDiv.setAttribute('style', cleanText);
   const style = tempDiv.style;
+
   const width = pxToNum(style.width) || 200;
   const height = pxToNum(style.height) || 60;
+  
+  // Corners
   const radiusStr = style.borderRadius || '0px';
   const radii = radiusStr.split(' ').map(pxToNum);
   let corners: number | Corners = radii[0] || 0;
-  if (radii.length === 2) corners = { topLeft: radii[0], topRight: radii[1], bottomRight: radii[0], bottomLeft: radii[1] };
-  else if (radii.length === 4) corners = { topLeft: radii[0], topRight: radii[1], bottomRight: radii[2], bottomLeft: radii[3] };
+  if (radii.length === 4) corners = { topLeft: radii[0], topRight: radii[1], bottomRight: radii[2], bottomLeft: radii[3] };
 
+  // Fills & Images
   const fills: Fill[] = [];
   const bgImage = style.backgroundImage;
   if (bgImage && bgImage !== 'none') {
@@ -118,9 +95,13 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
       const gradient = parseGradient(layer);
       if (gradient) fills.push({ type: 'gradient', value: gradient, visible: true });
       else if (layer.includes('url')) {
-          const type = layer.toLowerCase().includes('noise') ? 'noise' : 'texture';
           const urlMatch = layer.match(/url\(['"]?([^'"]+)['"]?\)/);
-          fills.push({ type, value: 'image', assetUrl: urlMatch ? urlMatch[1] : undefined, visible: true });
+          fills.push({ 
+            type: layer.toLowerCase().includes('noise') ? 'noise' : 'texture', 
+            value: 'image', 
+            assetUrl: urlMatch ? urlMatch[1] : undefined, 
+            visible: true 
+          });
       }
     });
   }
@@ -129,32 +110,38 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
     fills.push({ type: 'solid', value: bgColor, visible: true });
   }
 
+  // Shadows
   const shadows: Shadow[] = [];
   const boxShadow = style.boxShadow;
   if (boxShadow && boxShadow !== 'none') {
     splitCSSLayers(boxShadow).forEach(layer => {
       const isInner = layer.includes('inset');
-      const cleanLayer = layer.replace('inset', '').trim();
-      const colorMatch = cleanLayer.match(/(rgba?\(.*?\)|#[\da-fA-F]+|[a-z]+)/i);
+      const colorMatch = layer.match(/(rgba?\(.*?\)|#[\da-fA-F]+|[a-z]+)/i);
       const color = colorMatch ? colorMatch[0] : '#000000';
-      const nums = cleanLayer.replace(color, '').trim().split(/\s+/).map(pxToNum);
-      shadows.push({ type: isInner ? 'inner' : 'drop', x: nums[0] || 0, y: nums[1] || 0, blur: nums[2] || 0, spread: nums[3] || 0, color, visible: true });
+      const nums = layer.replace('inset', '').replace(color, '').trim().split(/\s+/).map(pxToNum);
+      shadows.push({ 
+        type: isInner ? 'inner' : 'drop', 
+        x: nums[0] || 0, 
+        y: nums[1] || 0, 
+        blur: nums[2] || 0, 
+        spread: nums[3] || 0, 
+        color, 
+        visible: true 
+      });
     });
   }
 
   // Blurs
   const backdropFilter = style.backdropFilter || (style as any).webkitBackdropFilter;
   const filter = style.filter;
-  let backdropBlur = 0;
-  let layerBlur = 0;
-  if (backdropFilter && backdropFilter.includes('blur')) {
-      const match = backdropFilter.match(/blur\(([^)]+)\)/);
-      if (match) backdropBlur = pxToNum(match[1]);
-  }
-  if (filter && filter.includes('blur')) {
-      const match = filter.match(/blur\(([^)]+)\)/);
-      if (match) layerBlur = pxToNum(match[1]);
-  }
+  let backdropBlur = 0, layerBlur = 0;
+  
+  const extractBlur = (s: string) => {
+      const m = s.match(/blur\(([\d.]+)px\)/);
+      return m ? parseFloat(m[1]) : 0;
+  };
+  if (backdropFilter) backdropBlur = extractBlur(backdropFilter);
+  if (filter) layerBlur = extractBlur(filter);
 
   document.body.removeChild(tempDiv);
   return { name: 'Figma Layer', width, height, corners, fills, shadows, opacity: 1, blur: layerBlur, backdropBlur };
