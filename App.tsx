@@ -44,15 +44,25 @@ const App: React.FC = () => {
        }
     }
 
-    // Basic heuristic: does it contain CSS-like props?
-    if (!textToParse.includes(':') && !textToParse.includes(';')) {
-      // Use current translations for error
+    // Validation:
+    // We used to check for ':' or ';', but users might paste raw "linear-gradient(...)"
+    // So we perform a looser check.
+    const likelyCSS = 
+       textToParse.includes(':') || 
+       textToParse.includes('gradient') || 
+       textToParse.includes('#') || 
+       textToParse.includes('rgb');
+
+    if (!likelyCSS) {
       setError(translations[lang].errors.notCss);
       return;
     }
 
     try {
       const parsed = parseClipboardData(textToParse);
+      // We check if we got meaningful data (width/height are defaults if parse fails completely, 
+      // but usually we want at least a fill or a corner radius changed?)
+      // Actually, parseClipboardData always returns a fallback object.
       if (parsed) {
         setLayerData(parsed);
       } else {
