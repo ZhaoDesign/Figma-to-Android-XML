@@ -20,18 +20,7 @@ const renderGradient = (g: Gradient): string => {
 };
 
 export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
-  // Construct CSS styles from data
-  
-  // 1. Backgrounds
-  const backgrounds = data.fills
-    .filter(f => f.visible)
-    .map(f => {
-      if (f.type === 'solid') return f.value as string;
-      return renderGradient(f.value as Gradient);
-    })
-    .join(', ');
-
-  // 2. Shadows
+  // 1. Shadows
   const boxShadows = data.shadows
     .filter(s => s.visible)
     .map(s => {
@@ -40,7 +29,7 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
     })
     .join(', ');
 
-  // 3. Corners
+  // 2. Corners
   let borderRadius = '';
   if (typeof data.corners === 'number') {
     borderRadius = `${data.corners}px`;
@@ -48,15 +37,42 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
     borderRadius = `${data.corners.topLeft}px ${data.corners.topRight}px ${data.corners.bottomRight}px ${data.corners.bottomLeft}px`;
   }
 
-  const style: React.CSSProperties = {
+  // 3. Dimensions & Base Style
+  const containerStyle: React.CSSProperties = {
     width: data.width,
     height: data.height,
-    background: backgrounds,
     boxShadow: boxShadows,
     borderRadius: borderRadius,
     position: 'relative',
     transition: 'all 0.3s ease',
+    overflow: 'hidden', // Clip children to corners
+    isolation: 'isolate', // Create stacking context
   };
+
+  // 4. Layers (Fills)
+  // Figma/CSS 'fills' array is Top-to-Bottom (Index 0 is Top).
+  // DOM Stacking is Bottom-to-Top (Last child is Top).
+  // So we render fills.reverse().
+  // HOWEVER: We want Index 0 (Top) to be rendered LAST (on top).
+  // So we iterate data.fills.slice().reverse().
+  const layers = [...data.fills].reverse().map((fill, index) => {
+    if (!fill.visible) return null;
+
+    const background = fill.type === 'solid' 
+      ? (fill.value as string)
+      : renderGradient(fill.value as Gradient);
+
+    return (
+      <div
+        key={index}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          background: background,
+        }}
+      />
+    );
+  });
 
   return (
     <div className="w-full h-full min-h-[400px] flex flex-col items-center justify-center bg-[url('https://grainy-gradients.vercel.app/noise.svg')] bg-gray-950 relative overflow-hidden border border-gray-750 rounded-xl">
@@ -64,10 +80,16 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
            style={{ backgroundImage: 'radial-gradient(#475569 1px, transparent 1px)', backgroundSize: '20px 20px' }}>
       </div>
       
-      <div style={style} className="flex items-center justify-center">
-         <span className="text-white font-medium mix-blend-overlay text-lg select-none">
-            {label || 'Preview'}
-         </span>
+      {/* The Component Preview */}
+      <div style={containerStyle}>
+        {layers}
+        
+        {/* Label Overlay (Centered) */}
+        <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+          <span className="text-white font-medium mix-blend-overlay text-lg select-none drop-shadow-md">
+             {label || 'Preview'}
+          </span>
+        </div>
       </div>
       
       <div className="absolute bottom-4 text-xs text-gray-500 font-mono">
