@@ -1,15 +1,22 @@
+
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
-  // base: './' 确保资源（js/css）使用相对路径加载
-  // 这对于 GitHub Pages 这种非根目录部署 (/repo-name/) 至关重要
+  // 使用 './' 确保在任何子路径下部署都能正确找到资源
   base: './',
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
     emptyOutDir: true,
+    // 确保生成的 index.html 引用的是正确的相对路径
+    rollupOptions: {
+      input: './index.html'
+    }
+  },
+  server: {
+    port: 3000,
+    open: true
   }
 })

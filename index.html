@@ -1,9 +1,10 @@
+
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Figma to Android XML</title>
+    <title>Figma to Android XML Converter</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script>
@@ -29,8 +30,9 @@
       body {
         background-color: #0f172a;
         color: #e2e8f0;
+        margin: 0;
       }
-      /* Custom scrollbar for code blocks */
+      /* 滚动条美化 */
       ::-webkit-scrollbar {
         width: 8px;
         height: 8px;
@@ -46,7 +48,7 @@
         background: #64748b;
       }
       
-      /* Fallback styles for when React fails to load */
+      /* 降级显示样式（仅在 JS 加载失败时可见） */
       .fallback-container {
         display: flex;
         flex-direction: column;
@@ -81,40 +83,36 @@
   <script type="importmap">
 {
   "imports": {
-    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
     "react/": "https://esm.sh/react@^19.2.3/",
     "react": "https://esm.sh/react@^19.2.3",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
     "vite": "https://esm.sh/vite@^7.3.0",
     "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2"
   }
 }
 </script>
-<link rel="stylesheet" href="/index.css">
 </head>
   <body>
     <div id="root">
-      <!-- 这个 div 的内容只会在 React 加载失败时显示 -->
+      <!-- 如果 React 加载成功，这里的内容会被替换 -->
       <div class="fallback-container">
         <h2 class="fallback-title">App Failed to Load / 应用无法加载</h2>
         <p class="fallback-text">
-          If you are seeing this, you likely opened <code>index.html</code> directly using a file manager.
-          Modern web apps require a web server to run securely.
-          <br/><br/>
-          如果您看到此页面，说明您可能直接双击打开了文件。
-          请使用以下免费方式运行：
+          如果您是在 GitHub Pages 上看到此消息，请确保已成功执行构建流程 (Build Action)。<br/>
+          如果您是本地打开，请勿直接双击 index.html，需通过本地服务器运行。
         </p>
-        <div style="text-align: left; background: #1e293b; padding: 20px; border-radius: 8px;">
-          <p style="margin-bottom: 8px; font-weight: bold;">Option 1: Local (本地运行)</p>
+        <div style="text-align: left; background: #1e293b; padding: 20px; border-radius: 8px; border: 1px solid #334155;">
+          <p style="margin-bottom: 8px; font-weight: bold; color: #38bdf8;">本地运行指南：</p>
           <code class="fallback-code">npm install</code><br/>
           <code class="fallback-code">npm run dev</code>
           
-          <p style="margin-top: 16px; margin-bottom: 8px; font-weight: bold;">Option 2: Deploy (部署上线)</p>
-          <p style="font-size: 0.9em; color: #cbd5e1;">Push code to GitHub and use <strong>Vercel</strong> or <strong>GitHub Pages</strong>.</p>
+          <p style="margin-top: 16px; margin-bottom: 8px; font-weight: bold; color: #38bdf8;">GitHub 部署检查：</p>
+          <p style="font-size: 0.9em; color: #cbd5e1;">请检查仓库的 <b>Settings > Pages</b>，确保源 (Source) 设置为 <b>GitHub Actions</b>。</p>
         </div>
       </div>
     </div>
-    <script type="module" src="./index.tsx"></script>
-  <script type="module" src="/index.tsx"></script>
-</body>
+    <!-- Vite 将在构建时处理此路径 -->
+    <script type="module" src="/index.tsx"></script>
+  </body>
 </html>
