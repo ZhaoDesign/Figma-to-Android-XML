@@ -1,3 +1,4 @@
+
 import { FigmaLayer, Fill, Gradient, GradientType, Corners, Shadow } from '../types';
 
 const toAndroidHex = (cssColor: string): string => {
@@ -75,7 +76,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
     xml += `    android:width="${w}dp" android:height="${h}dp"\n`;
     xml += `    android:viewportWidth="${w}" android:viewportHeight="${h}">\n\n`;
 
-    // Shadows
+    // Drop Shadows
     layer.shadows.filter(s => s.type === 'drop' && s.visible).forEach((s, idx) => {
         const shadowPath = getRoundedRectPath(w + s.spread * 2, h + s.spread * 2, layer.corners);
         xml += `    <group android:translateX="${s.x - s.spread}" android:translateY="${s.y - s.spread}">\n`;
@@ -106,7 +107,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
             const isElliptical = g.type === GradientType.Angular || g.type === GradientType.Radial;
             
             if (isElliptical) {
-                // ELLIPTICAL MATRIX TRANSFORM
+                // To support Rotate-then-Squash, we use nested groups
                 const layerAspect = h / w;
                 let scaleY = layerAspect;
                 
@@ -114,36 +115,43 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                     scaleY = (g.size.y / g.size.x) * layerAspect;
                 }
 
+                // Outer group handles the Squash (Scaling)
                 xml += `    <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
-                if (g.type === GradientType.Angular) {
-                    // CSS starts at Top (0deg), Android Sweep starts at Right (90deg). Adjust by -90.
-                    const rotation = (g.angle || 0) - 90;
-                    xml += `           android:rotation="${rotation.toFixed(2)}"\n`;
-                }
                 xml += `           android:scaleY="${scaleY.toFixed(4)}">\n`;
+                
+                // Inner group handles the Rotation (Angle)
+                const needsRotation = g.type === GradientType.Angular;
+                if (needsRotation) {
+                    const rotation = (g.angle || 0) - 90; // CSS starts top, Android starts right
+                    xml += `        <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
+                    xml += `               android:rotation="${rotation.toFixed(2)}">\n`;
+                }
 
                 const maxDim = Math.max(w, h) * 4;
                 const fillX = centerX - maxDim / 2;
                 const fillY = centerY - maxDim / 2;
+                const pad = needsRotation ? '            ' : '        ';
 
-                xml += `        <path android:pathData="M${fillX.toFixed(1)},${fillY.toFixed(1)} h${maxDim.toFixed(1)} v${maxDim.toFixed(1)} h-${maxDim.toFixed(1)} z">\n`;
-                xml += `            <aapt:attr name="android:fillColor">\n`;
-                xml += `                <gradient android:type="${g.type === GradientType.Angular ? 'sweep' : 'radial'}"\n`;
-                xml += `                          android:centerX="${centerX.toFixed(2)}"\n`;
-                xml += `                          android:centerY="${centerY.toFixed(2)}"\n`;
+                xml += `${pad}<path android:pathData="M${fillX.toFixed(1)},${fillY.toFixed(1)} h${maxDim.toFixed(1)} v${maxDim.toFixed(1)} h-${maxDim.toFixed(1)} z">\n`;
+                xml += `${pad}    <aapt:attr name="android:fillColor">\n`;
+                xml += `${pad}        <gradient android:type="${g.type === GradientType.Angular ? 'sweep' : 'radial'}"\n`;
+                xml += `${pad}                  android:centerX="${centerX.toFixed(2)}"\n`;
+                xml += `${pad}                  android:centerY="${centerY.toFixed(2)}"\n`;
                 
                 if (g.type === GradientType.Radial) {
                     const radius = Math.max(w, h) / 2;
-                    xml += `                          android:gradientRadius="${radius.toFixed(1)}"\n`;
+                    xml += `${pad}                  android:gradientRadius="${radius.toFixed(1)}"\n`;
                 }
 
                 g.stops.sort((a,b) => a.position - b.position).forEach(stop => {
-                    xml += `                    <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
+                    xml += `${pad}            <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
                 });
                 
-                xml += `                </gradient>\n`;
-                xml += `            </aapt:attr>\n`;
-                xml += `        </path>\n`;
+                xml += `${pad}        </gradient>\n`;
+                xml += `${pad}    </aapt:attr>\n`;
+                xml += `${pad}</path>\n`;
+                
+                if (needsRotation) xml += `        </group>\n`;
                 xml += `    </group>\n`;
             } else {
                 // Standard Linear

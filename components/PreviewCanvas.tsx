@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { FigmaLayer, Gradient, GradientType } from '../types';
 
@@ -53,45 +54,54 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
       const centerX = g.center?.x ?? 50;
       const centerY = g.center?.y ?? 50;
 
-      // Logic for Elliptical Scaling (Squashing)
-      // If width != height, standard circular gradients won't match Figma
       const isElliptical = g.type === GradientType.Angular || g.type === GradientType.Radial;
       
       if (isElliptical) {
         const layerAspect = data.height / data.width;
         let scaleY = layerAspect;
         
-        // If we have explicit size data from CSS (e.g., 47.6% 50%)
         if (g.size && g.size.x !== 0) {
           scaleY = (g.size.y / g.size.x) * layerAspect;
         }
 
-        // Create a large square centered at the gradient focal point
+        // MATRIX NESTING:
+        // Outer div: Squash (Scale)
+        // Inner div: Rotation (Angle)
         const size = Math.max(data.width, data.height) * 4;
-        const angle = g.angle !== undefined ? `${g.angle}deg` : '0deg';
+        const angle = g.angle !== undefined ? g.angle : 0;
         
         const background = g.type === GradientType.Angular
-          ? `conic-gradient(from ${angle} at 50% 50%, ${stopsStr})`
+          ? `conic-gradient(from 0deg at 50% 50%, ${stopsStr})`
           : `radial-gradient(circle at 50% 50%, ${stopsStr})`;
 
         return (
-          <div key={index} style={{
-            position: 'absolute',
-            left: `${centerX}%`,
-            top: `${centerY}%`,
-            width: size,
-            height: size,
-            background: background,
-            // Non-uniform scaling squashes the circular sweep/radial into an ellipse
-            transform: `translate(-50%, -50%) scaleY(${scaleY})`,
-            opacity: fill.opacity ?? 1,
-            mixBlendMode: (fill.blendMode || 'normal') as any,
-            pointerEvents: 'none'
-          }} />
+          <div key={index} 
+            style={{
+              position: 'absolute',
+              left: `${centerX}%`,
+              top: `${centerY}%`,
+              width: size,
+              height: size,
+              pointerEvents: 'none',
+              // Apply scaling around focal point
+              transform: `translate(-50%, -50%) scale(1, ${scaleY})`,
+              opacity: fill.opacity ?? 1,
+              mixBlendMode: (fill.blendMode || 'normal') as any,
+              transformOrigin: '50% 50%'
+            }}
+          >
+            <div style={{
+                width: '100%',
+                height: '100%',
+                background: background,
+                // Rotate circular sweep inside squashed space
+                transform: g.type === GradientType.Angular ? `rotate(${angle}deg)` : 'none',
+                transformOrigin: '50% 50%'
+            }} />
+          </div>
         );
       }
 
-      // Linear Gradient (standard)
       const background = `linear-gradient(${g.angle || 0}deg, ${stopsStr})`;
       return (
         <div key={index} style={{
