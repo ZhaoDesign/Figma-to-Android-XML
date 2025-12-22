@@ -167,17 +167,31 @@ const generateGradient = (gradient: Gradient): string => {
     let radiusVal = "75%p"; // Default
     
     if (rawGeometry) {
-        // Look for size definitions like "80% 80%" or "150px"
-        const sizeMatch = rawGeometry.match(/(\d+)%\s*(\d+)?%/);
-        if (sizeMatch) {
-            const w = parseInt(sizeMatch[1]);
-            const h = sizeMatch[2] ? parseInt(sizeMatch[2]) : w;
-            const maxDim = Math.max(w, h);
+        // Match percentage or pixel values.
+        // Support "100% 50%" (ellipse) or "150px" or "100%"
+        const matches = rawGeometry.match(/(\d+(?:\.\d+)?)(%|px)/g);
+        
+        if (matches && matches.length > 0) {
+            // Take the largest dimension found to ensure coverage
+            let maxVal = 0;
+            let unit = '%';
             
-            // Map CSS size to Android Radius roughly
-            // Cap it reasonably to avoid rendering errors
-            if (maxDim > 0) {
-                radiusVal = `${Math.min(maxDim, 150)}%p`;
+            matches.forEach(m => {
+                const val = parseFloat(m); // extracts number
+                if (m.includes('%')) {
+                   if (val > maxVal) { maxVal = val; unit = '%p'; } // Android uses %p for parent relative
+                } else if (m.includes('px')) {
+                   // px is harder to map to %p without context, but let's assume if it's huge, we use it as dp?
+                   // No, Android gradientRadius can be dimension (dp) or %p.
+                   if (val > maxVal) { maxVal = val; unit = 'dp'; } 
+                }
+            });
+            
+            // Limit insane values
+            if (unit === '%p') {
+                radiusVal = `${Math.min(maxVal, 200)}%p`;
+            } else {
+                radiusVal = `${Math.round(maxVal)}dp`;
             }
         }
     }
