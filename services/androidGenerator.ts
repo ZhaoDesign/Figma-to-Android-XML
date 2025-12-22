@@ -55,19 +55,18 @@ const getRoundedRectPath = (w: number, h: number, corners: Corners | number, ins
 
     return `M${p(rTL+i)},${p(i)} ` +
            `H${p(width-rTR+i)} ` +
-           `A${p(rTR)},${p(rTR)} 0 0 1 ${p(width+i)},${p(rTR+i)} ` +
+           `A${p(rTR)},${p(rTR) || 0.01} 0 0 1 ${p(width+i)},${p(rTR+i)} ` +
            `V${p(height-rBR+i)} ` +
-           `A${p(rBR)},${p(rBR)} 0 0 1 ${p(width-rBR+i)},${p(height+i)} ` +
+           `A${p(rBR)},${p(rBR) || 0.01} 0 0 1 ${p(width-rBR+i)},${p(height+i)} ` +
            `H${p(rBL+i)} ` +
-           `A${p(rBL)},${p(rBL)} 0 0 1 ${p(i)},${p(height-rBL+i)} ` +
+           `A${p(rBL)},${p(rBL) || 0.01} 0 0 1 ${p(i)},${p(height-rBL+i)} ` +
            `V${p(rTL+i)} ` +
-           `A${p(rTL)},${p(rTL)} 0 0 1 ${p(rTL+i)},${p(i)} Z`;
+           `A${p(rTL)},${p(rTL) || 0.01} 0 0 1 ${p(rTL+i)},${p(i)} Z`;
 };
 
 export const generateAndroidXML = (layer: FigmaLayer): string => {
     const w = Math.round(layer.width);
     const h = Math.round(layer.height);
-    const isElliptical = w !== h;
     
     let xml = `<?xml version="1.0" encoding="utf-8"?>\n`;
     xml += `<!-- Generated from Figma Advanced (Vector Mode) -->\n`;
@@ -106,21 +105,28 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
             if (g.type === GradientType.Radial || g.type === GradientType.Diamond) androidType = 'radial';
             if (g.type === GradientType.Angular) androidType = 'sweep';
 
+            const isElliptical = w !== h;
             const needsScaling = (g.type === GradientType.Radial || g.type === GradientType.Angular || g.type === GradientType.Diamond) && isElliptical;
+            const rotation = g.type === GradientType.Angular ? (g.angle || 0) : 0;
+            const centerX = (g.center?.x ?? 50) * w / 100;
+            const centerY = (g.center?.y ?? 50) * h / 100;
 
-            if (needsScaling) {
+            // Group for rotation or scaling
+            if (needsScaling || rotation !== 0) {
                 const scaleY = h / w;
-                const translateY = (h - (h * scaleY)) / 2; // Approximation to center scaled gradient
-                xml += `    <group android:scaleY="${scaleY.toFixed(3)}" android:translateY="${translateY.toFixed(3)}">\n`;
+                xml += `    <group android:pivotX="${centerX}" android:pivotY="${centerY}"\n`;
+                if (rotation !== 0) xml += `           android:rotation="${rotation}"\n`;
+                if (needsScaling) xml += `           android:scaleY="${scaleY.toFixed(3)}"\n`;
+                xml += `    >\n`;
             }
 
             xml += `        <path android:pathData="M0,0 h${w} v${h} h-${w} z">\n`;
             xml += `            <aapt:attr name="android:fillColor">\n`;
             xml += `                <gradient android:type="${androidType}"\n`;
+            xml += `                          android:centerX="${centerX.toFixed(2)}"\n`;
+            xml += `                          android:centerY="${centerY.toFixed(2)}"\n`;
             if (g.type === GradientType.Radial || g.type === GradientType.Diamond) {
                 const radius = Math.max(w, h) / 2;
-                xml += `                          android:centerX="${w / 2}"\n`;
-                xml += `                          android:centerY="${h / 2}"\n`;
                 xml += `                          android:gradientRadius="${radius.toFixed(1)}"\n`;
             }
             xml += `                          android:startColor="${toAndroidHex(g.stops[0].color)}"\n`;
@@ -128,7 +134,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
             xml += `            </aapt:attr>\n`;
             xml += `        </path>\n`;
 
-            if (needsScaling) {
+            if (needsScaling || rotation !== 0) {
                 xml += `    </group>\n`;
             }
         }

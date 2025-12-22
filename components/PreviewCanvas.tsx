@@ -12,15 +12,16 @@ const renderGradient = (g: Gradient): string => {
     .map(s => `${s.color} ${s.position}%`)
     .join(', ');
 
+  const centerX = g.center?.x ?? 50;
+  const centerY = g.center?.y ?? 50;
+
   if (g.type === GradientType.Angular) {
       const angle = g.angle !== undefined ? `${g.angle}deg` : '0deg';
-      // Conic gradients naturally follow the container aspect ratio if not forced to circle
-      return `conic-gradient(from ${angle} at 50% 50%, ${stopsStr})`;
+      return `conic-gradient(from ${angle} at ${centerX}% ${centerY}%, ${stopsStr})`;
   }
 
   if (g.type === GradientType.Diamond) {
-      // Diamond is best approximated by an elliptical radial gradient in CSS
-      return `radial-gradient(ellipse at 50% 50%, ${stopsStr})`;
+      return `radial-gradient(ellipse at ${centerX}% ${centerY}%, ${stopsStr})`;
   }
 
   if (g.rawGeometry) {
@@ -29,12 +30,12 @@ const renderGradient = (g: Gradient): string => {
   }
     
   if (g.type === GradientType.Linear) return `linear-gradient(${g.angle || 180}deg, ${stopsStr})`;
-  // Circular radial
-  return `radial-gradient(circle at 50% 50%, ${stopsStr})`;
+  
+  // Custom center for Radial
+  return `radial-gradient(circle at ${centerX}% ${centerY}%, ${stopsStr})`;
 };
 
 export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
-  // 1. Separate Shadows
   const innerShadows = data.shadows
     .filter(s => s.visible && s.type === 'inner')
     .map(s => `inset ${s.x}px ${s.y}px ${s.blur}px ${s.spread}px ${s.color}`)
@@ -45,12 +46,10 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
     .map(s => `${s.x}px ${s.y}px ${s.blur}px ${s.spread}px ${s.color}`)
     .join(', ');
 
-  // 2. Corners
   const borderRadius = typeof data.corners === 'number' 
     ? `${data.corners}px` 
     : `${data.corners.topLeft}px ${data.corners.topRight}px ${data.corners.bottomRight}px ${data.corners.bottomLeft}px`;
 
-  // 3. Main Container Styles
   const containerStyle: React.CSSProperties = {
     width: data.width,
     height: data.height,

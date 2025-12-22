@@ -42,34 +42,46 @@ const parseGradient = (gradientStr: string): Gradient | null => {
   const parts = splitCSSLayers(content);
   
   let type = isLinear ? GradientType.Linear : (isRadial ? GradientType.Radial : GradientType.Angular);
-  let angle = 180;
+  let angle = 0;
   let stopsStartIndex = 0;
+  let center = { x: 50, y: 50 };
   let rawGeometry: string | undefined = undefined;
 
   const firstPart = parts[0];
   const firstPartLower = firstPart.toLowerCase();
   
-  const keywords = ['circle', 'ellipse', 'at', 'center', 'top', 'bottom', 'left', 'right', 'deg', 'to ', 'from '];
-  const isGeometry = keywords.some(k => firstPartLower.includes(k) || /[\d.]+%/.test(firstPartLower));
-
-  if (isGeometry) {
-    stopsStartIndex = 1;
-    rawGeometry = firstPart;
-    if (isLinear && firstPartLower.includes('deg')) {
-      angle = parseFloat(firstPartLower);
-    }
-    if (isConic && firstPartLower.includes('from')) {
-        const match = firstPartLower.match(/from\s+([\d.]+)deg/);
-        if (match) angle = parseFloat(match[1]);
-    }
-    // Figma Diamond Detection: often radial-gradient with non-standard geometry or keywords like ellipse
-    if (isRadial && (lowerStr.includes('diamond') || lowerStr.includes('ellipse'))) {
-       type = GradientType.Diamond;
-    }
+  // Logic to handle "from [angle] at [x] [y]"
+  if (isConic) {
+      const fromMatch = firstPartLower.match(/from\s+([\d.]+)deg/);
+      if (fromMatch) {
+          angle = parseFloat(fromMatch[1]);
+          stopsStartIndex = 1;
+      }
+      const atMatch = firstPartLower.match(/at\s+([\d.]+)%\s+([\d.]+)%/);
+      if (atMatch) {
+          center = { x: parseFloat(atMatch[1]), y: parseFloat(atMatch[2]) };
+          stopsStartIndex = 1;
+      }
+  } else if (isLinear) {
+      const degMatch = firstPartLower.match(/([\d.]+)deg/);
+      if (degMatch) {
+          angle = parseFloat(degMatch[1]);
+          stopsStartIndex = 1;
+      }
+  } else if (isRadial) {
+      const atMatch = firstPartLower.match(/at\s+([\d.]+)%\s+([\d.]+)%/);
+      if (atMatch) {
+          center = { x: parseFloat(atMatch[1]), y: parseFloat(atMatch[2]) };
+          stopsStartIndex = 1;
+      }
+      if (lowerStr.includes('diamond') || lowerStr.includes('ellipse')) {
+          type = GradientType.Diamond;
+      }
   }
 
   const stops: ColorStop[] = [];
   parts.slice(stopsStartIndex).forEach((part, index, arr) => {
+    // Improved regex to handle colors like rgba() and positions in % or deg
     const match = part.match(/^([\s\S]+?)(?:\s+(-?[\d.]+(?:%|px|deg|))|)$/);
     if (match) {
       let colorStr = match[1].trim();
@@ -88,7 +100,7 @@ const parseGradient = (gradientStr: string): Gradient | null => {
     }
   });
 
-  return { type, angle, rawGeometry, stops };
+  return { type, angle, center, rawGeometry, stops };
 };
 
 export const parseClipboardData = (text: string): FigmaLayer | null => {
