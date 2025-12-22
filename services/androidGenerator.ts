@@ -107,27 +107,34 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
             const isElliptical = g.type === GradientType.Angular || g.type === GradientType.Radial;
             
             if (isElliptical) {
-                // To support Rotate-then-Squash, we use nested groups
                 const layerAspect = h / w;
                 let scaleY = layerAspect;
-                
+                let baseRadius = Math.max(w, h); // Fallback
+
                 if (g.size && g.size.x !== 0) {
-                    scaleY = (g.size.y / g.size.x) * layerAspect;
+                    // For CSS: 30.23% 39.58% at 54.56% 50%
+                    // Horizontal Radius = 30.23% * Width
+                    // Vertical Radius = 39.58% * Height
+                    const horizRadius = (g.size.x / 100) * w;
+                    const vertRadius = (g.size.y / 100) * h;
+                    
+                    baseRadius = horizRadius;
+                    scaleY = vertRadius / horizRadius;
                 }
 
                 // Outer group handles the Squash (Scaling)
                 xml += `    <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
-                xml += `           android:scaleY="${scaleY.toFixed(4)}">\n`;
+                xml += `           android:scaleY="${scaleY.toFixed(6)}">\n`;
                 
-                // Inner group handles the Rotation (Angle)
+                // Inner group handles the Rotation (Only for Angular)
                 const needsRotation = g.type === GradientType.Angular;
                 if (needsRotation) {
-                    const rotation = (g.angle || 0) - 90; // CSS starts top, Android starts right
+                    const rotation = (g.angle || 0) - 90;
                     xml += `        <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
                     xml += `               android:rotation="${rotation.toFixed(2)}">\n`;
                 }
 
-                const maxDim = Math.max(w, h) * 4;
+                const maxDim = Math.max(w, h) * 6;
                 const fillX = centerX - maxDim / 2;
                 const fillY = centerY - maxDim / 2;
                 const pad = needsRotation ? '            ' : '        ';
@@ -139,8 +146,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 xml += `${pad}                  android:centerY="${centerY.toFixed(2)}"\n`;
                 
                 if (g.type === GradientType.Radial) {
-                    const radius = Math.max(w, h) / 2;
-                    xml += `${pad}                  android:gradientRadius="${radius.toFixed(1)}"\n`;
+                    xml += `${pad}                  android:gradientRadius="${baseRadius.toFixed(2)}"\n`;
                 }
 
                 g.stops.sort((a,b) => a.position - b.position).forEach(stop => {
@@ -159,7 +165,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 xml += `        <aapt:attr name="android:fillColor">\n`;
                 xml += `            <gradient android:type="linear"\n`;
                 const rad = ((g.angle || 0) - 90) * Math.PI / 180;
-                const length = Math.sqrt(w*w + h*h);
+                const length = Math.sqrt(w*w + h*h) * 2;
                 const x1 = centerX - (Math.cos(rad) * length / 2);
                 const y1 = centerY - (Math.sin(rad) * length / 2);
                 const x2 = centerX + (Math.cos(rad) * length / 2);

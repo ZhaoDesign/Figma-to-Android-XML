@@ -57,17 +57,18 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
       const isElliptical = g.type === GradientType.Angular || g.type === GradientType.Radial;
       
       if (isElliptical) {
-        const layerAspect = data.height / data.width;
-        let scaleY = layerAspect;
-        
+        let scaleY = data.height / data.width;
+        let baseRadiusPx = data.width / 2;
+
         if (g.size && g.size.x !== 0) {
-          scaleY = (g.size.y / g.size.x) * layerAspect;
+           const horizRadius = (g.size.x / 100) * data.width;
+           const vertRadius = (g.size.y / 100) * data.height;
+           baseRadiusPx = horizRadius;
+           scaleY = vertRadius / horizRadius;
         }
 
-        // MATRIX NESTING:
-        // Outer div: Squash (Scale)
-        // Inner div: Rotation (Angle)
-        const size = Math.max(data.width, data.height) * 4;
+        // Base size is the circle before squash
+        const size = baseRadiusPx * 10; // Large enough to cover
         const angle = g.angle !== undefined ? g.angle : 0;
         
         const background = g.type === GradientType.Angular
@@ -83,7 +84,6 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
               width: size,
               height: size,
               pointerEvents: 'none',
-              // Apply scaling around focal point
               transform: `translate(-50%, -50%) scale(1, ${scaleY})`,
               opacity: fill.opacity ?? 1,
               mixBlendMode: (fill.blendMode || 'normal') as any,
@@ -94,7 +94,6 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
                 width: '100%',
                 height: '100%',
                 background: background,
-                // Rotate circular sweep inside squashed space
                 transform: g.type === GradientType.Angular ? `rotate(${angle}deg)` : 'none',
                 transformOrigin: '50% 50%'
             }} />
