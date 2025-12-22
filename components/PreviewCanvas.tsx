@@ -60,15 +60,16 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
         let scaleY = data.height / data.width;
         let baseRadiusPx = data.width / 2;
 
-        if (g.size && g.size.x !== 0) {
+        if (g.type === GradientType.Radial && g.size && g.size.x !== 0) {
            const horizRadius = (g.size.x / 100) * data.width;
            const vertRadius = (g.size.y / 100) * data.height;
            baseRadiusPx = horizRadius;
            scaleY = vertRadius / horizRadius;
+        } else if (g.type === GradientType.Angular && g.size && g.size.x !== 0) {
+           scaleY = (g.size.y / g.size.x) * (data.height / data.width);
         }
 
-        // Base size is the circle before squash
-        const size = baseRadiusPx * 10; // Large enough to cover
+        const size = baseRadiusPx * 12; // Buffer for coverage
         const angle = g.angle !== undefined ? g.angle : 0;
         
         const background = g.type === GradientType.Angular
@@ -94,6 +95,7 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
                 width: '100%',
                 height: '100%',
                 background: background,
+                // Nested rotation ONLY for Angular/Conic to preserve correct elliptical sweep
                 transform: g.type === GradientType.Angular ? `rotate(${angle}deg)` : 'none',
                 transformOrigin: '50% 50%'
             }} />

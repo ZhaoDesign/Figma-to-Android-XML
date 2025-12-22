@@ -107,34 +107,36 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
             const isElliptical = g.type === GradientType.Angular || g.type === GradientType.Radial;
             
             if (isElliptical) {
-                const layerAspect = h / w;
-                let scaleY = layerAspect;
-                let baseRadius = Math.max(w, h); // Fallback
+                let scaleY = 1.0;
+                let baseRadius = Math.max(w, h);
+                let needsRotation = g.type === GradientType.Angular;
 
-                if (g.size && g.size.x !== 0) {
-                    // For CSS: 30.23% 39.58% at 54.56% 50%
-                    // Horizontal Radius = 30.23% * Width
-                    // Vertical Radius = 39.58% * Height
-                    const horizRadius = (g.size.x / 100) * w;
-                    const vertRadius = (g.size.y / 100) * h;
-                    
-                    baseRadius = horizRadius;
-                    scaleY = vertRadius / horizRadius;
+                // SPECIALIZED CALCULATION FOR RADIAL
+                if (g.type === GradientType.Radial && g.size && g.size.x !== 0) {
+                    const horizRadiusPx = (g.size.x / 100) * w;
+                    const vertRadiusPx = (g.size.y / 100) * h;
+                    baseRadius = horizRadiusPx;
+                    scaleY = vertRadiusPx / horizRadiusPx;
+                } 
+                // RETENTION OF WORKING ANGULAR LOGIC
+                else if (g.type === GradientType.Angular) {
+                    scaleY = h / w;
+                    if (g.size && g.size.x !== 0) {
+                        scaleY = (g.size.y / g.size.x) * (h / w);
+                    }
                 }
 
-                // Outer group handles the Squash (Scaling)
+                // Outer group: Squash
                 xml += `    <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
                 xml += `           android:scaleY="${scaleY.toFixed(6)}">\n`;
                 
-                // Inner group handles the Rotation (Only for Angular)
-                const needsRotation = g.type === GradientType.Angular;
                 if (needsRotation) {
                     const rotation = (g.angle || 0) - 90;
                     xml += `        <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
                     xml += `               android:rotation="${rotation.toFixed(2)}">\n`;
                 }
 
-                const maxDim = Math.max(w, h) * 6;
+                const maxDim = Math.max(w, h) * 8; // Larger buffer for radial coverage
                 const fillX = centerX - maxDim / 2;
                 const fillY = centerY - maxDim / 2;
                 const pad = needsRotation ? '            ' : '        ';
