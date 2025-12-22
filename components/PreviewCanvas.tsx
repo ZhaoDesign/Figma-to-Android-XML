@@ -22,13 +22,15 @@ const renderGradient = (g: Gradient): string => {
 };
 
 export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
-  // 1. Shadows (Drop and Inner)
-  const boxShadows = data.shadows
-    .filter(s => s.visible)
-    .map(s => {
-      const inset = s.type === 'inner' ? 'inset ' : '';
-      return `${inset}${s.x}px ${s.y}px ${s.blur}px ${s.spread}px ${s.color}`;
-    })
+  // 1. Separate Shadows
+  const innerShadows = data.shadows
+    .filter(s => s.visible && s.type === 'inner')
+    .map(s => `inset ${s.x}px ${s.y}px ${s.blur}px ${s.spread}px ${s.color}`)
+    .join(', ');
+
+  const dropShadows = data.shadows
+    .filter(s => s.visible && s.type === 'drop')
+    .map(s => `${s.x}px ${s.y}px ${s.blur}px ${s.spread}px ${s.color}`)
     .join(', ');
 
   // 2. Corners
@@ -46,20 +48,31 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
     overflow: 'hidden',
     isolation: 'isolate',
     filter: data.blur ? `blur(${data.blur}px)` : undefined,
-    backdropFilter: data.backdropBlur ? `blur(${data.backdropBlur}px)` : undefined,
-    WebkitBackdropFilter: data.backdropBlur ? `blur(${data.backdropBlur}px)` : undefined,
+    boxShadow: dropShadows, // Drop shadows apply to the container itself
   };
 
   return (
-    <div className="w-full h-full min-h-[400px] flex flex-col items-center justify-center bg-[url('https://grainy-gradients.vercel.app/noise.svg')] bg-gray-950 relative overflow-hidden border border-gray-750 rounded-xl">
+    <div className="w-full h-full min-h-[400px] flex flex-col items-center justify-center bg-gray-900 relative overflow-hidden border border-gray-750 rounded-xl">
+      {/* Grid Background */}
       <div className="absolute inset-0 opacity-10 pointer-events-none" 
            style={{ backgroundImage: 'radial-gradient(#475569 1px, transparent 1px)', backgroundSize: '20px 20px' }}>
       </div>
       
-      {/* Container with Box Shadows on a wrapper to ensure they aren't clipped by overflow:hidden if they are drop shadows */}
-      <div style={{ filter: boxShadows.includes('inset') ? undefined : `drop-shadow(0 0 0 transparent)` }}>
+      {/* Shadow Wrapper to prevent clipping of drop shadows */}
+      <div className="relative">
          <div style={containerStyle}>
-            {/* Fills Layer */}
+            {/* Backdrop Blur Layer */}
+            {data.backdropBlur ? (
+              <div style={{
+                position: 'absolute',
+                inset: 0,
+                backdropFilter: `blur(${data.backdropBlur}px)`,
+                WebkitBackdropFilter: `blur(${data.backdropBlur}px)`,
+                zIndex: -1
+              }} />
+            ) : null}
+
+            {/* Fills Layers (Bottom to Top) */}
             {[...data.fills].reverse().map((fill, index) => {
               if (!fill.visible) return null;
               const background = fill.type === 'solid' 
@@ -78,27 +91,31 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
               );
             })}
 
-            {/* Inner Shadows Layer (needs to be on top of fills to be visible) */}
-            <div style={{
-                position: 'absolute',
-                inset: 0,
-                boxShadow: boxShadows,
-                borderRadius: borderRadius,
-                pointerEvents: 'none',
-                zIndex: 5
-            }} />
+            {/* Inner Shadows Overlay - Must be on top of fills */}
+            {innerShadows && (
+              <div style={{
+                  position: 'absolute',
+                  inset: 0,
+                  boxShadow: innerShadows,
+                  borderRadius: borderRadius,
+                  pointerEvents: 'none',
+                  zIndex: 10
+              }} />
+            )}
             
-            <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
-              <span className="text-white font-medium mix-blend-overlay text-lg select-none drop-shadow-md">
+            {/* Label */}
+            <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
+              <span className="text-white font-semibold mix-blend-difference text-lg select-none">
                  {label || 'Preview'}
               </span>
             </div>
          </div>
       </div>
       
-      <div className="absolute bottom-4 text-xs text-gray-500 font-mono flex gap-4">
-        <span>{Math.round(data.width)} x {Math.round(data.height)}</span>
+      <div className="absolute bottom-4 text-xs text-gray-500 font-mono flex flex-wrap justify-center gap-x-4 gap-y-1 px-4">
+        <span>Size: {Math.round(data.width)}×{Math.round(data.height)}</span>
         {data.backdropBlur ? <span className="text-blue-400">Backdrop Blur: {data.backdropBlur}px</span> : null}
+        {innerShadows ? <span className="text-purple-400">Inner Shadow Active</span> : null}
       </div>
     </div>
   );
