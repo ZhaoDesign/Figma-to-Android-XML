@@ -83,14 +83,18 @@ const parseGradient = (gradientStr: string): Gradient | null => {
     // This is hard with regex alone due to nesting. 
     // Heuristic: Color is usually at start, Position at end.
     
-    // Let's use the browser to help us via a dummy logic or robust regex
+    // Updated regex to be more permissive with color formats (hex, rgb, named)
     // Matches: (color string) (spacing) (percentage/length)
-    // Note: [\s\S] matches newlines too just in case
     const match = part.match(/^([\s\S]+?)(?:\s+([\d.]+%?|[\d.]+px))?$/);
     
     if (match) {
-      const colorStr = match[1].trim();
+      let colorStr = match[1].trim();
       let positionStr = match[2];
+
+      // Clean up color string (remove inner spaces if it's hex, though invalid in CSS, valid for some copies)
+      if (colorStr.startsWith('#') && colorStr.includes(' ')) {
+          colorStr = colorStr.split(' ')[0];
+      }
 
       let position = 0;
       if (positionStr) {
@@ -123,6 +127,7 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   let cleanText = text.replace(/\/\*[\s\S]*?\*\//g, '');
   
   // 2. Normalize format
+  // Remove braces, replace newlines with semicolons, remove trailing commas/semicolons from values
   cleanText = cleanText.replace(/[{}]/g, '').replace(/\n/g, ';');
   
   // 3. Smart Detection: If user pasted JUST the value (e.g. "linear-gradient(...)") without property,
@@ -165,6 +170,7 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   if (bgImage && bgImage !== 'none' && bgImage !== 'initial') {
     const layers = splitCSSLayers(bgImage);
     layers.forEach(layer => {
+      // Ignore 'url(...)' or other non-gradients for now, unless we want to map them to solid placeholders?
       const gradient = parseGradient(layer);
       if (gradient) {
         fills.push({
