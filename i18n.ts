@@ -14,11 +14,12 @@ export const translations = {
     features: [
       "Drop & Inner Shadows (X, Y, Blur, Spread)",
       "Background & Layer Blur (metadata comments)",
-      "Linear & Radial Gradients (Complex geometries)",
+      "Linear, Radial, Angular & Diamond Gradients",
+      "Fill Layer Blend Modes (Preview support)",
       "Noise & Texture detection",
       "Corner Radius (Uniform & Independent)"
     ],
-    proTip: "Pro Tip: Complex shadows are approximated using offset layers in VectorDrawables.",
+    proTip: "Pro Tip: Complex shadows and blend modes are approximated using offset layers and comments in VectorDrawables.",
     errors: {
       notCss: "Clipboard content doesn't look like CSS. In Figma, try Right Click > Copy as CSS.",
       parseFail: "Failed to parse visual properties.",
@@ -38,11 +39,12 @@ export const translations = {
     features: [
       "投影与内阴影（X, Y, 模糊, 扩展）",
       "背景模糊与图层模糊（代码注释提示）",
-      "线性与径向渐变（支持复杂几何变换）",
+      "线性、径向、角度与菱形渐变",
+      "填充图层混合模式（预览支持）",
       "噪点与纹理检测",
       "圆角设置（支持统一或独立圆角）"
     ],
-    proTip: "小贴士：复杂阴影通过 VectorDrawable 的偏移层进行视觉拟合。",
+    proTip: "小贴士：复杂阴影与混合模式通过 VectorDrawable 的偏移层与注释进行拟合。",
     errors: {
       notCss: "剪贴板内容不符合 CSS 格式。请在 Figma 中尝试“右键 > Copy as CSS”。",
       parseFail: "无法解析视觉属性，请检查复制内容。",

@@ -50,7 +50,7 @@ const parseGradient = (gradientStr: string): Gradient | null => {
   const firstPartLower = firstPart.toLowerCase();
   
   const keywords = ['circle', 'ellipse', 'at', 'center', 'top', 'bottom', 'left', 'right', 'deg', 'to ', 'from '];
-  const isGeometry = keywords.some(k => firstPartLower.includes(k));
+  const isGeometry = keywords.some(k => firstPartLower.includes(k) || /[\d.]+%/.test(k));
 
   if (isGeometry) {
     stopsStartIndex = 1;
@@ -62,19 +62,14 @@ const parseGradient = (gradientStr: string): Gradient | null => {
         const match = firstPartLower.match(/from\s+([\d.]+)deg/);
         if (match) angle = parseFloat(match[1]);
     }
-  }
-
-  // Detect Diamond (Figma often exports Diamond as radial-gradient with specific keywords or geometry)
-  if (isRadial && (lowerStr.includes('diamond') || firstPartLower.includes('ellipse'))) {
-      // Figma doesn't have a standard CSS keyword for diamond, 
-      // but if we detect specialized geometry in a radial context, we flag it.
-      // Usually users copy-paste raw CSS which might contain comments.
-      if (gradientStr.includes('diamond')) type = GradientType.Diamond;
+    // Figma Diamond Detection: often radial-gradient with non-standard geometry or keywords
+    if (isRadial && (lowerStr.includes('diamond') || firstPartLower.includes('50% 50%'))) {
+       type = GradientType.Diamond;
+    }
   }
 
   const stops: ColorStop[] = [];
   parts.slice(stopsStartIndex).forEach((part, index, arr) => {
-    // Handle "color position" or just "color"
     const match = part.match(/^([\s\S]+?)(?:\s+(-?[\d.]+(?:%|px|deg|))|)$/);
     if (match) {
       let colorStr = match[1].trim();
@@ -101,7 +96,8 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   tempDiv.style.display = 'none';
   document.body.appendChild(tempDiv);
 
-  let cleanText = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/[{}]/g, '').replace(/\n/g, ' ');
+  // Preserve comments for diamond detection hints
+  const cleanText = text.replace(/[{}]/g, '').replace(/\n/g, ' ');
   tempDiv.setAttribute('style', cleanText);
   const style = tempDiv.style;
 
@@ -113,26 +109,41 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   let corners: number | Corners = radii[0] || 0;
   if (radii.length === 4) corners = { topLeft: radii[0], topRight: radii[1], bottomRight: radii[2], bottomLeft: radii[3] };
 
+  // Parse Blend Modes
+  const blendModes = (style.backgroundBlendMode || 'normal').split(',').map(s => s.trim());
+  const mainMixBlend = style.mixBlendMode || 'normal';
+
   const fills: Fill[] = [];
   const bgImage = style.backgroundImage;
   if (bgImage && bgImage !== 'none') {
-    splitCSSLayers(bgImage).forEach(layer => {
+    const layers = splitCSSLayers(bgImage);
+    layers.forEach((layer, idx) => {
       const gradient = parseGradient(layer);
-      if (gradient) fills.push({ type: 'gradient', value: gradient, visible: true });
-      else if (layer.includes('url')) {
+      const blendMode = blendModes[idx] || (idx === 0 ? mainMixBlend : 'normal');
+      
+      if (gradient) {
+        fills.push({ type: 'gradient', value: gradient, visible: true, blendMode });
+      } else if (layer.includes('url')) {
           const urlMatch = layer.match(/url\(['"]?([^'"]+)['"]?\)/);
           fills.push({ 
             type: layer.toLowerCase().includes('noise') ? 'noise' : 'texture', 
             value: 'image', 
             assetUrl: urlMatch ? urlMatch[1] : undefined, 
-            visible: true 
+            visible: true,
+            blendMode
           });
       }
     });
   }
+  
   const bgColor = style.backgroundColor;
   if (bgColor && bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
-    fills.push({ type: 'solid', value: bgColor, visible: true });
+    fills.push({ 
+        type: 'solid', 
+        value: bgColor, 
+        visible: true, 
+        blendMode: blendModes[fills.length] || 'normal' 
+    });
   }
 
   const shadows: Shadow[] = [];

@@ -93,6 +93,12 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
     // 3. Fills
     [...layer.fills].reverse().forEach((fill, idx) => {
         if (!fill.visible) return;
+        
+        xml += `    <!-- Fill ${idx + 1}: ${fill.type.toUpperCase()} (Blend: ${fill.blendMode || 'normal'}) -->\n`;
+        if (fill.blendMode && fill.blendMode !== 'normal') {
+            xml += `    <!-- Note: '${fill.blendMode}' blend mode not natively supported in VectorDrawable path fills. -->\n`;
+        }
+
         xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z"\n`;
         if (fill.type === 'solid') {
             xml += `          android:fillColor="${toAndroidHex(fill.value as string)}" />\n`;
