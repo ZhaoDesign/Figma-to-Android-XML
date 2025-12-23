@@ -1,9 +1,35 @@
+
 # Figma to Android XML Converter
 
 这是一个免费的开发者工具，用于将 Figma 样式直接转换为 Android XML Drawable 代码。
 
 ## 🚀 部署状态
 如果您的 Action 配置正确，推送到 GitHub 后，请去 **Actions** 标签页查看部署进度。
+
+## 🧠 技术原理与渲染模型
+
+### 为什么 CSS/XML 很难还原 Figma 渐变？
+Figma 使用 **3x3 仿射变换矩阵 (Affine Matrix)** 来描述渐变，这允许渐变发生旋转、非等比缩放（压扁的椭圆）甚至切变。而 CSS 和 Android XML 原生仅支持简单的 **参数化模型**（如圆心、半径、角度）。
+
+### 本项目的解决方案
+为了实现 **100% 像素级还原**，本项目采用了 **"Matrix Re-projection" (矩阵重映射)** 技术：
+
+1.  **Web 预览**：
+    *   通过解析 `gradientTransform` 矩阵，提取精确的 `scale` 和 `rotate` 参数。
+    *   使用 CSS Transforms (`rotate`, `scale`) 作用于渐变容器，模拟 Figma 的矩阵变换。
+    *   *Pro Tip: 对于极度复杂的渐变，解析器优先尝试读取 SVG 数据以获取原始矩阵。*
+
+2.  **Android XML 生成**：
+    *   **线性渐变**：计算起点和终点的绝对坐标。
+    *   **径向/扫描渐变**：Android 原生 `<gradient>` 不支持椭圆或旋转。我们利用 `VectorDrawable` 的 `<group>` 嵌套机制：
+        *   外层 `<group>` 处理 **位移 (Translate)**。
+        *   中层 `<group>` 处理 **旋转 (Rotate)**。
+        *   内层 `<group>` 处理 **缩放 (Scale)**（实现椭圆效果）。
+        *   最内层才是标准的 `<gradient>`。
+
+这种架构确保了即使是 **旋转的压扁椭圆渐变** 或 **非中心点的扫描渐变**，也能在 Android 上完美呈现。
+
+---
 
 ## 🚀 如何运行（免费模式）
 
@@ -38,15 +64,14 @@
 4. Vercel 会自动识别 Vite 项目并部署，无需任何配置，完全免费。
 
 ## ✨ 功能
-- 解析 Figma CSS (Copy as CSS)
-- 生成 `<gradient>` (线性与径向)
-- 生成 `<layer-list>` (多层背景)
-- 生成 `<corners>` (圆角)
-- 生成 `<solid>` (纯色填充)
-- 支持中英文切换
+- **高保真解析**：支持 Figma SVG 矩阵解析
+- **Android Vector**：通过 Group Transform 完美还原旋转/椭圆渐变
+- **多图层混合**：支持 Solid, Linear, Radial, Angular, Diamond
+- **特效支持**：Shadows (Drop/Inner), Blur, Corners
+- **多语言**：支持中英文切换
 
 ## 🛠️ 技术栈
-- React
+- React 19
 - TypeScript
 - Tailwind CSS
 - Vite

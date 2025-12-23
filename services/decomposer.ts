@@ -3,8 +3,8 @@ import { FigmaLayer, PrimitiveLayer, Gradient, GradientType, ColorStop } from '.
 
 /**
  * DECOMPOSER ENGINE
- *
- * Goal: Break down complex gradients into a list of simple "Primitive Layers"
+ * 
+ * Goal: Break down complex gradients into a list of simple "Primitive Layers" 
  * (Ellipses/Rects with simple transforms) that can be easily rendered on any platform.
  */
 
@@ -22,7 +22,7 @@ const getOpacityFromColor = (color: string): number => {
 
 const normalizeColor = (color: string): string => {
     // Return rgb part, separate opacity is handled elsewhere usually
-    return color;
+    return color; 
 };
 
 /**
@@ -49,9 +49,9 @@ const createPrimitive = (shape: 'ellipse' | 'rect', w: number, h: number): Primi
 const decomposeGradient = (gradient: Gradient, layerW: number, layerH: number, opacity: number): PrimitiveLayer[] => {
     const primitives: PrimitiveLayer[] = [];
     const t = gradient.transform || { a:1, b:0, c:0, d:1, tx:0, ty:0, rotation:0, scaleX:1, scaleY:1 };
-
+    
     // 1. Normalize Matrix Transform
-
+    
     const baseTransform = {
         x: t.tx,
         y: t.ty,
@@ -67,19 +67,19 @@ const decomposeGradient = (gradient: Gradient, layerW: number, layerH: number, o
     const LARGE_CANVAS = 100;
 
     // 2. Decompose based on Type
-
+    
     if (gradient.type === GradientType.Diamond) {
         // --- DIAMOND STRATEGY ---
-        const p = createPrimitive('rect', LARGE_CANVAS, LARGE_CANVAS);
-
+        const p = createPrimitive('rect', LARGE_CANVAS, LARGE_CANVAS); 
+        
         p.transform = {
             ...baseTransform,
             rotation: baseTransform.rotation + 45
         };
-
+        
         p.fill.stops = gradient.stops;
         p.fill.opacity = opacity;
-
+        
         primitives.push(p);
 
     } else if (gradient.type === GradientType.Radial) {
@@ -88,24 +88,24 @@ const decomposeGradient = (gradient: Gradient, layerW: number, layerH: number, o
         p.transform = baseTransform;
         p.fill.stops = gradient.stops;
         p.fill.opacity = opacity;
-
+        
         primitives.push(p);
-
+        
     } else if (gradient.type === GradientType.Angular) {
          // --- ANGULAR STRATEGY ---
-         // For Angular, we definitely want a Rect that fills the screen,
+         // For Angular, we definitely want a Rect that fills the screen, 
          // but using an 'ellipse' primitive shape with Sweep gradient is safer for the Generator logic
          // which expects circular/elliptical contexts for center alignment.
-         // Actually, to avoid corner clipping on a sweep, a Rectangle is safer than Ellipse
-         // if the aspect ratio is extreme.
+         // Actually, to avoid corner clipping on a sweep, a Rectangle is safer than Ellipse 
+         // if the aspect ratio is extreme. 
          // But let's stick to Ellipse for consistency, the LARGE_CANVAS handles the size.
-
+         
          const p = createPrimitive('ellipse', LARGE_CANVAS, LARGE_CANVAS);
          p.transform = baseTransform;
          p.fill.stops = gradient.stops;
          p.fill.opacity = opacity;
-         (p as any).originalType = 'angular';
-
+         (p as any).originalType = 'angular'; 
+         
          primitives.push(p);
 
     } else {
@@ -116,10 +116,10 @@ const decomposeGradient = (gradient: Gradient, layerW: number, layerH: number, o
         p.fill.stops = gradient.stops;
         p.fill.opacity = opacity;
         (p as any).originalType = 'linear';
-
+        
         primitives.push(p);
     }
-
+    
     return primitives;
 };
 
@@ -132,7 +132,7 @@ export const decomposeLayer = (layer: FigmaLayer): PrimitiveLayer[] => {
     // 1. Process Fills
     layer.fills.forEach(fill => {
         if (!fill.visible) return;
-
+        
         if (fill.type === 'solid') {
             // Solid fill -> Full Size Rect Primitive (Actual Pixel Size)
             const p = createPrimitive('rect', layer.width, layer.height);
@@ -141,7 +141,7 @@ export const decomposeLayer = (layer: FigmaLayer): PrimitiveLayer[] => {
             p.fill.color = fill.value as string;
             p.fill.opacity = fill.opacity ?? 1;
             allPrimitives.push(p);
-        }
+        } 
         else if (fill.type === 'gradient') {
             const grad = fill.value as Gradient;
             const grads = decomposeGradient(grad, layer.width, layer.height, fill.opacity ?? 1);

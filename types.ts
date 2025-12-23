@@ -15,40 +15,26 @@ export interface ColorStop {
 export interface Gradient {
   type: GradientType;
   stops: ColorStop[];
-  angle?: number; // Linear: direction; Angular: start angle; Radial: rotation angle
-  center?: { x: number; y: number };
-  size?: { x: number; y: number }; // Percentage values for elliptical axes
-  handles?: {
-    start: { x: number; y: number };
-    end: { x: number; y: number };
+  // 增加坐标支持，用于线性渐变直传
+  coords?: {
+    x1: number; y1: number;
+    x2: number; y2: number;
   };
-  rawGeometry?: string;
+  transform?: {
+    a: number; b: number; c: number; d: number;
+    tx: number; ty: number;
+    rotation: number;
+    scaleX: number;
+    scaleY: number;
+  };
 }
 
 export interface Fill {
-  type: 'solid' | 'gradient' | 'noise' | 'texture';
+  type: 'solid' | 'gradient';
   value: string | Gradient;
   opacity?: number;
-  blendMode?: string;
   visible: boolean;
-  assetUrl?: string; // For textures/noise exported as images
-}
-
-export interface Shadow {
-  type: 'drop' | 'inner';
-  x: number;
-  y: number;
-  blur: number;
-  spread: number;
-  color: string;
-  visible: boolean;
-}
-
-export interface Corners {
-  topLeft: number;
-  topRight: number;
-  bottomRight: number;
-  bottomLeft: number;
+  pathData?: string; // 存储原始路径指令
 }
 
 export interface FigmaLayer {
@@ -56,9 +42,30 @@ export interface FigmaLayer {
   width: number;
   height: number;
   fills: Fill[];
-  corners: Corners | number;
-  shadows: Shadow[];
+  corners: number;
+  shadows: any[];
   opacity: number;
-  blur?: number; // Layer blur (filter: blur)
-  backdropBlur?: number; // Background blur (backdrop-filter: blur)
+}
+
+// Added PrimitiveLayer interface to resolve import error in services/decomposer.ts
+export interface PrimitiveLayer {
+  id: string;
+  shape: 'ellipse' | 'rect';
+  width: number;
+  height: number;
+  transform: {
+    x: number;
+    y: number;
+    rotation: number;
+    scaleX: number;
+    scaleY: number;
+  };
+  fill: {
+    type: 'solid' | 'gradient';
+    color?: string;
+    stops?: ColorStop[];
+    opacity: number;
+    blendMode: string;
+    blur: number;
+  };
 }
