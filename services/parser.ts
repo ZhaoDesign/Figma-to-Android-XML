@@ -59,8 +59,6 @@ const parseGradient = (gradientStr: string): Gradient | null => {
       const atMatch = firstPartLower.match(/at\s+([\d.]+)%\s+([\d.]+)%/);
       if (atMatch) center = { x: parseFloat(atMatch[1]), y: parseFloat(atMatch[2]) };
 
-      // Conic gradient 的第一部分通常是配置，所以停止点从索引 1 开始
-      // 除非第一部分就是颜色（非常罕见，通常 Figma 都会带 from/at）
       if (firstPartLower.includes('from') || firstPartLower.includes('at')) {
           stopsStartIndex = 1;
       }
@@ -71,79 +69,55 @@ const parseGradient = (gradientStr: string): Gradient | null => {
           stopsStartIndex = 1;
       }
   } else if (isRadial) {
-      // 修复逻辑：更稳健地解析 Figma 的径向渐变语法
-      // 常见格式: "48.14% 50% at 50% 50%" 或 "at 50% 50%"
-
-      // 只要包含 " at "，我们就认为第一部分是参数定义，而不是颜色
+      // 径向渐变解析
       if (firstPartLower.includes(' at ') || firstPartLower.startsWith('at ')) {
           stopsStartIndex = 1;
-
-          // 分割尺寸和位置
-          // 格式: [size part] at [position part]
           const atIndex = firstPartLower.indexOf('at');
           const sizeStr = firstPartLower.substring(0, atIndex).trim();
-          const posStr = firstPartLower.substring(atIndex + 2).trim(); // +2 for length of "at"
+          const posStr = firstPartLower.substring(atIndex + 2).trim();
 
-          // 提取尺寸 (例如: "48.14% 50%")
           const sizeMatches = sizeStr.match(/([\d.]+)%/g);
           if (sizeMatches && sizeMatches.length >= 2) {
-             // 移除 % 后转数字
-             size = {
-                 x: parseFloat(sizeMatches[0]),
-                 y: parseFloat(sizeMatches[1])
-             };
+             size = { x: parseFloat(sizeMatches[0]), y: parseFloat(sizeMatches[1]) };
           } else if (sizeMatches && sizeMatches.length === 1) {
-             // 只有一个值，则通常用于圆形，宽高一致
              const val = parseFloat(sizeMatches[0]);
              size = { x: val, y: val };
           }
 
-          // 提取位置 (例如: "50% 50%")
           const posMatches = posStr.match(/([\d.]+)%/g);
           if (posMatches && posMatches.length >= 2) {
-              center = {
-                  x: parseFloat(posMatches[0]),
-                  y: parseFloat(posMatches[1])
-              };
+              center = { x: parseFloat(posMatches[0]), y: parseFloat(posMatches[1]) };
           }
       } else {
-          // 尝试匹配没有 "at" 但开头是百分比的情况 (罕见，但为了保险)
           const pureSizeMatch = firstPartLower.match(/^([\d.]+)%\s+([\d.]+)%$/);
           if (pureSizeMatch) {
              stopsStartIndex = 1;
              size = { x: parseFloat(pureSizeMatch[1]), y: parseFloat(pureSizeMatch[2]) };
           }
       }
+      // CSS 不支持径向渐变角度，所以这里默认为 0，稍后由 UI 手动控制
+      angle = 0;
   }
 
   const stops: ColorStop[] = [];
   const rawStops = parts.slice(stopsStartIndex);
 
   rawStops.forEach((part, index) => {
-    // Regex to capture color and optional position
-    // 允许颜色值中包含括号 (例如 rgba)
     const match = part.trim().match(/^([\s\S]+?)(?:\s+(-?[\d.]+(?:%|px|deg|))|)$/);
     if (match) {
       let colorStr = match[1].trim();
       let posVal = match[2];
       let position = 0;
 
-      // 过滤掉因为解析错误导致的非颜色字符串
-      if (colorStr.includes(' at ') || colorStr.length > 50) {
-          return;
-      }
+      if (colorStr.includes(' at ') || colorStr.length > 50) return;
 
       if (posVal) {
-          // --- 关键修复：处理单位 ---
           const isDegrees = posVal.includes('deg');
           const val = parseFloat(posVal);
 
           if (isDegrees) {
-              // 将角度转换为百分比： (角度 / 360) * 100
-              // 例如：360deg -> 100%, 78.76deg -> 21.87%
               position = (val / 360) * 100;
           } else {
-              // 默认为百分比或像素（像素在此语境下通常也按数值处理）
               position = val;
           }
       } else {

@@ -14,7 +14,7 @@ export interface ColorStop {
 export interface Gradient {
   type: GradientType;
   stops: ColorStop[];
-  angle?: number;
+  angle?: number; // Linear: direction; Angular: start angle; Radial: rotation angle
   center?: { x: number; y: number };
   size?: { x: number; y: number }; // Percentage values for elliptical axes
   rawGeometry?: string;

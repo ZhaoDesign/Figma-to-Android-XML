@@ -1,7 +1,8 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
-import { Palette, Info, Languages } from 'lucide-react';
+import { Palette, Info, Languages, Sliders, RotateCw } from 'lucide-react';
 import { INITIAL_DATA } from './constants';
-import { FigmaLayer } from './types';
+import { FigmaLayer, Gradient } from './types';
 import { parseClipboardData } from './services/parser';
 import { generateAndroidXML } from './services/androidGenerator';
 import { PreviewCanvas } from './components/PreviewCanvas';
@@ -35,7 +36,7 @@ const App: React.FC = () => {
 
     // Prefer Parsing text if it looks like CSS, otherwise try HTML (which might contain style attr)
     let textToParse = clipboardText;
-    
+
     // Check if HTML has a style attribute we can extract
     if (clipboardHtml.includes('style="')) {
        const match = clipboardHtml.match(/style="([^"]*)"/);
@@ -45,12 +46,10 @@ const App: React.FC = () => {
     }
 
     // Validation:
-    // We used to check for ':' or ';', but users might paste raw "linear-gradient(...)"
-    // So we perform a looser check.
-    const likelyCSS = 
-       textToParse.includes(':') || 
-       textToParse.includes('gradient') || 
-       textToParse.includes('#') || 
+    const likelyCSS =
+       textToParse.includes(':') ||
+       textToParse.includes('gradient') ||
+       textToParse.includes('#') ||
        textToParse.includes('rgb');
 
     if (!likelyCSS) {
@@ -60,9 +59,6 @@ const App: React.FC = () => {
 
     try {
       const parsed = parseClipboardData(textToParse);
-      // We check if we got meaningful data (width/height are defaults if parse fails completely, 
-      // but usually we want at least a fill or a corner radius changed?)
-      // Actually, parseClipboardData always returns a fallback object.
       if (parsed) {
         setLayerData(parsed);
       } else {
@@ -81,9 +77,30 @@ const App: React.FC = () => {
     };
   }, [handlePaste]);
 
+  // Handle manual gradient rotation update
+  const updateGradientAngle = (angle: number) => {
+    setLayerData(prev => {
+      const newFills = [...prev.fills];
+      // Try to find the first visible gradient
+      const gradIndex = newFills.findIndex(f => f.type === 'gradient' && f.visible);
+      if (gradIndex !== -1) {
+        const grad = newFills[gradIndex].value as Gradient;
+        newFills[gradIndex] = {
+          ...newFills[gradIndex],
+          value: { ...grad, angle: angle }
+        };
+      }
+      return { ...prev, fills: newFills };
+    });
+  };
+
+  // Get current active gradient angle
+  const activeGradient = layerData.fills.find(f => f.type === 'gradient' && f.visible);
+  const currentAngle = activeGradient ? (activeGradient.value as Gradient).angle || 0 : 0;
+
   return (
     <div className="min-h-screen p-6 md:p-12 flex flex-col gap-8 max-w-7xl mx-auto">
-      
+
       {/* Header */}
       <header className="space-y-4">
         <div className="flex items-center justify-between">
@@ -93,8 +110,8 @@ const App: React.FC = () => {
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-white">{t.title}</h1>
           </div>
-          
-          <button 
+
+          <button
             onClick={toggleLanguage}
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-750 bg-gray-800 hover:bg-gray-700 hover:border-gray-600 transition-all text-sm text-gray-300"
           >
@@ -102,7 +119,7 @@ const App: React.FC = () => {
             <span className="font-medium">{lang === 'en' ? '中文' : 'English'}</span>
           </button>
         </div>
-        
+
         <p className="text-gray-400 max-w-2xl leading-relaxed">
           {t.subtitlePre} <kbd className="bg-gray-800 px-1.5 py-0.5 rounded text-gray-300 text-xs font-mono border border-gray-700">{t.subtitleCmd}</kbd>{t.subtitlePost}
         </p>
@@ -110,16 +127,45 @@ const App: React.FC = () => {
 
       {/* Main Content */}
       <main className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1">
-        
+
         {/* Left: Preview */}
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">{t.visualPreview}</h2>
             {error && <span className="text-red-400 text-xs bg-red-900/30 px-2 py-1 rounded border border-red-900/50 animate-pulse">{error}</span>}
           </div>
-          
+
           <PreviewCanvas data={layerData} label={t.previewOverlay} />
-          
+
+          {/* Manual Controls Panel */}
+          {activeGradient && (
+            <div className="bg-gray-850 border border-gray-750 p-4 rounded-lg space-y-3">
+               <div className="flex items-center gap-2 text-sm text-gray-300 font-medium">
+                  <Sliders size={16} />
+                  <span>Properties / 属性调整</span>
+               </div>
+               <div className="grid grid-cols-[auto_1fr_auto] gap-4 items-center">
+                  <div className="flex items-center gap-2 text-gray-400 text-xs">
+                    <RotateCw size={14} />
+                    <span>Rotation</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="360"
+                    value={currentAngle}
+                    onChange={(e) => updateGradientAngle(Number(e.target.value))}
+                    className="h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500 w-full"
+                  />
+                  <span className="text-xs font-mono text-gray-400 min-w-[3ch]">{Math.round(currentAngle)}°</span>
+               </div>
+               <p className="text-xs text-gray-500 mt-2">
+                 * Figma CSS often omits radial gradient rotation. Use this slider to match the design. <br/>
+                 * Figma 复制的 CSS 常丢失径向渐变角度，请使用此滑块手动匹配。
+               </p>
+            </div>
+          )}
+
           <div className="bg-blue-900/20 border border-blue-900/50 p-4 rounded-lg flex gap-3 text-blue-200 text-sm">
              <Info className="shrink-0 mt-0.5" size={16} />
              <div>

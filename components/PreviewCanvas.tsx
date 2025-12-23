@@ -54,27 +54,36 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
       const centerX = g.center?.x ?? 50;
       const centerY = g.center?.y ?? 50;
 
-      // --- 径向渐变 (Radial) 修复逻辑 ---
+      // --- 径向渐变 (Radial) ---
       if (g.type === GradientType.Radial) {
-        // 直接使用 CSS 原生的径向渐变语法，支持椭圆尺寸
-        // 语法: radial-gradient(宽度半径 高度半径 at 位置, 颜色停止点)
+        // 由于 CSS radial-gradient 不支持旋转，我们必须旋转整个 div
         const sizeX = g.size?.x ?? 50;
         const sizeY = g.size?.y ?? 50;
-        
-        const background = `radial-gradient(${sizeX}% ${sizeY}% at ${centerX}% ${centerY}%, ${stopsStr})`;
-        
+
+        // 我们创建一个更大的 div 来确保旋转时覆盖整个区域
+        const rotation = g.angle || 0;
+        const scale = 2.0; // 放大以防旋转后出现边缘
+
+        const background = `radial-gradient(${sizeX}% ${sizeY}% at 50% 50%, ${stopsStr})`;
+
         return (
           <div key={index} style={{
             position: 'absolute',
-            inset: 0,
-            background: background,
+            left: `${centerX}%`,
+            top: `${centerY}%`,
+            width: '100%',
+            height: '100%',
+            transform: `translate(-50%, -50%) rotate(${rotation}deg) scale(${scale})`,
+            transformOrigin: '50% 50%',
             opacity: fill.opacity ?? 1,
-            mixBlendMode: (fill.blendMode || 'normal') as any
-          }} />
+            mixBlendMode: (fill.blendMode || 'normal') as any,
+          }}>
+              <div style={{ width: '100%', height: '100%', background: background }} />
+          </div>
         );
-      } 
-      
-      // --- 角度渐变 (Angular) 保持原有正确逻辑 ---
+      }
+
+      // --- 角度渐变 (Angular) ---
       if (g.type === GradientType.Angular) {
         let scaleY = (data.height / data.width);
         if (g.size && g.size.x !== 0) {

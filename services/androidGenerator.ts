@@ -116,10 +116,14 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                     scaleY = vertRadiusPx / horizRadiusPx;
                 }
 
+                // 关键修复：添加 android:rotation，允许径向渐变倾斜
+                const rotation = g.angle || 0;
+
                 xml += `    <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
+                xml += `           android:rotation="${rotation.toFixed(2)}"\n`;
                 xml += `           android:scaleY="${scaleY.toFixed(6)}">\n`;
-                // 增大覆盖矩形，防止在大缩放比例下边缘被切断
-                const fillSize = baseRadius * 8;
+
+                const fillSize = baseRadius * 8; // 放大绘制区域以防止旋转后边缘穿帮
                 xml += `        <path android:pathData="M${(centerX - fillSize).toFixed(1)},${(centerY - fillSize).toFixed(1)} h${(fillSize * 2).toFixed(1)} v${(fillSize * 2).toFixed(1)} h-${(fillSize * 2).toFixed(1)} z">\n`;
                 xml += `            <aapt:attr name="android:fillColor">\n`;
                 xml += `                <gradient android:type="radial"\n`;
@@ -133,7 +137,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 xml += `        </path>\n`;
                 xml += `    </group>\n`;
             } else if (g.type === GradientType.Angular) {
-                // --- 角度渐变 (ANGULAR) - 保持正确逻辑 ---
+                // --- 角度渐变 (ANGULAR) ---
                 let scaleY = h / w;
                 if (g.size && g.size.x !== 0) {
                     scaleY = (g.size.y / g.size.x) * (h / w);
