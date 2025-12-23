@@ -52,11 +52,18 @@ const parseGradient = (gradientStr: string): Gradient | null => {
   const firstPartLower = firstPart.toLowerCase();
 
   if (isConic) {
+      // 解析 "conic-gradient(from 90deg at 50% 50%, ...)"
       const fromMatch = firstPartLower.match(/from\s+([\d.]+)deg/);
       if (fromMatch) angle = parseFloat(fromMatch[1]);
+
       const atMatch = firstPartLower.match(/at\s+([\d.]+)%\s+([\d.]+)%/);
       if (atMatch) center = { x: parseFloat(atMatch[1]), y: parseFloat(atMatch[2]) };
-      stopsStartIndex = 1;
+
+      // Conic gradient 的第一部分通常是配置，所以停止点从索引 1 开始
+      // 除非第一部分就是颜色（非常罕见，通常 Figma 都会带 from/at）
+      if (firstPartLower.includes('from') || firstPartLower.includes('at')) {
+          stopsStartIndex = 1;
+      }
   } else if (isLinear) {
       const degMatch = firstPartLower.match(/([\d.]+)deg/);
       if (degMatch) {
@@ -127,7 +134,18 @@ const parseGradient = (gradientStr: string): Gradient | null => {
       }
 
       if (posVal) {
-          position = parseFloat(posVal);
+          // --- 关键修复：处理单位 ---
+          const isDegrees = posVal.includes('deg');
+          const val = parseFloat(posVal);
+
+          if (isDegrees) {
+              // 将角度转换为百分比： (角度 / 360) * 100
+              // 例如：360deg -> 100%, 78.76deg -> 21.87%
+              position = (val / 360) * 100;
+          } else {
+              // 默认为百分比或像素（像素在此语境下通常也按数值处理）
+              position = val;
+          }
       } else {
           position = rawStops.length > 1 ? (index / (rawStops.length - 1)) * 100 : 0;
       }
