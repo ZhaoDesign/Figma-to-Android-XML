@@ -17,16 +17,17 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
     ? `${data.corners}px` 
     : `${data.corners.topLeft}px ${data.corners.topRight}px ${data.corners.bottomRight}px ${data.corners.bottomLeft}px`;
 
+  // 这是最外层的容器，负责“形状”和“剪切”
   const containerStyle: React.CSSProperties = {
     width: data.width,
     height: data.height,
     borderRadius: borderRadius,
     position: 'relative',
     transition: 'all 0.3s ease',
-    overflow: 'hidden',
+    overflow: 'hidden', // 关键：确保旋转的内容不会溢出圆角边界
     isolation: 'isolate',
     filter: data.blur ? `blur(${data.blur}px)` : undefined,
-    boxShadow: dropShadows, 
+    boxShadow: dropShadows,
   };
 
   const renderFill = (fill: any, index: number) => {
@@ -55,38 +56,39 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
       const centerY = g.center?.y ?? 50;
 
       // --- 径向渐变 (Radial) ---
-      // 模拟 Android 渲染逻辑：创建一个圆，缩放其 Y 轴变成椭圆，然后旋转整个椭圆
       if (g.type === GradientType.Radial) {
-        // 1. 计算长短轴
-        let radiusX = 50; // default %
-        let radiusY = 50;
+        // SVG 解析出的 size.x 是相对于 width 的百分比
+        // 例如 Figma 导出 r="1" scaleX="126" width="296" -> size.x = 42.5%
+
+        let rX_px = 0;
+        let scaleY = 1;
 
         if (g.size) {
-            radiusX = g.size.x; // e.g. 42.57%
-            radiusY = g.size.y; // e.g. 100%
+            const widthPx = data.width;
+            const heightPx = data.height;
+            rX_px = (g.size.x / 100) * widthPx;
+            const rY_px = (g.size.y / 100) * heightPx;
+
+            // 防止除以0
+            if (rX_px > 0) {
+                scaleY = rY_px / rX_px;
+            }
+        } else {
+             rX_px = data.width / 2;
         }
 
-        // 2. 计算缩放比例 (ScaleY)
-        // 注意：这里需要考虑容器的实际宽高比，因为 g.size 是百分比
-        // 在 Android 代码中：baseRadius = radiusX_px, scaleY = radiusY_px / radiusX_px
-        // 在 CSS transform scale 中，我们也是相对自身坐标系
-        // 但 CSS radial-gradient(circle) 生成正圆，我们需要压缩它
-
-        // 计算实际像素比例
-        const widthPx = data.width;
-        const heightPx = data.height;
-        const rX_px = (radiusX / 100) * widthPx;
-        const rY_px = (radiusY / 100) * heightPx;
-
-        const scaleY = rX_px === 0 ? 1 : rY_px / rX_px;
         const rotation = g.angle || 0;
 
-        // 使用一个超大的正方形容器来承载渐变，确保旋转后能覆盖
-        // 大小设为 200% 或更大
-        const bigSize = '200%';
+        // 渲染策略：
+        // 为了防止旋转时出现边缘空白，我们不将 div 设为 rX_px * 2。
+        // 因为如果 rX 比较小（例如按钮中间的一个光斑），那没问题。
+        // 但如果渐变很大，旋转可能会导致裁剪。
+        // 关键点：CSS transform 是以自身的中心旋转的。
 
-        // 背景是一个正圆渐变，半径为 rX_px (即100%宽度的 circle)
-        // 我们通过 transform scale(1, scaleY) 把它压扁
+        // 我们创建一个 div，大小正好是渐变椭圆的长轴直径 (rX * 2)
+        // 然后放置在 center 位置
+        const diameter = rX_px * 2;
+
         const background = `radial-gradient(circle closest-side, ${stopsStr})`;
 
         return (
@@ -94,14 +96,12 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
             position: 'absolute',
             left: `${centerX}%`,
             top: `${centerY}%`,
-            width: rX_px * 2, // 宽度设为直径
-            height: rX_px * 2, // 高度也设为直径（正圆）
-            // 变换顺序：先平移居中 -> 旋转 -> 缩放
-            // 这里的顺序和 Android XML 的嵌套对应：
-            // Android Outer Group: Rotation
-            // Android Inner Group: ScaleY
-            // CSS: transform 属性从右向左执行（但写在字符串里是从左向右读？不，是矩阵乘法）
-            // 简单的理解：我们对这个 div 应用样式。
+            width: diameter,
+            height: diameter,
+            // 变换顺序：
+            // 1. translate(-50%, -50%): 把 div 的中心点对齐到 (left, top)
+            // 2. rotate(...): 旋转
+            // 3. scale(1, scaleY): 压扁成椭圆
             transform: `translate(-50%, -50%) rotate(${rotation}deg) scale(1, ${scaleY})`,
             transformOrigin: '50% 50%',
             opacity: fill.opacity ?? 1,
@@ -112,6 +112,7 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
         );
       }
 
+      // ... (其他渐变类型保持不变) ...
       // --- 角度渐变 (Angular) ---
       if (g.type === GradientType.Angular) {
         let scaleY = (data.height / data.width);
@@ -122,7 +123,7 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
         const size = Math.max(data.width, data.height) * 4;
 
         return (
-          <div key={index} 
+          <div key={index}
             style={{
               position: 'absolute',
               left: `${centerX}%`,
@@ -165,13 +166,20 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
 
   return (
     <div className="w-full h-full min-h-[400px] flex flex-col items-center justify-center bg-gray-900 relative overflow-hidden border border-gray-750 rounded-xl">
-      <div className="absolute inset-0 opacity-10 pointer-events-none" 
+      <div className="absolute inset-0 opacity-10 pointer-events-none"
            style={{ backgroundImage: 'radial-gradient(#475569 1px, transparent 1px)', backgroundSize: '20px 20px' }}>
       </div>
-      
+
       <div className="relative">
+         {/* 渲染整个按钮容器 */}
          <div style={containerStyle}>
-            {[...data.fills].reverse().map((fill, index) => renderFill(fill, index))}
+            {/* 反转顺序渲染，因为 Figma 顶层在 fills[length-1] 还是 [0]? */}
+            {/* parser.ts 中我们按顺序 push，通常 CSS 中 bg-image 越靠前越在上面。*/}
+            {/* SVG 中后面的元素覆盖前面的。 */}
+            {/* 我们在 parser 中如果是 SVG，按 DOM 顺序 (底 -> 顶)。 */}
+            {/* 如果是 CSS，bg-image 逗号分隔，第一个在最上面。 */}
+            {/* 为了统一起见，我们在 Preview 这里假设 fills 数组是 [底, ..., 顶] */}
+            {data.fills.map((fill, index) => renderFill(fill, index))}
             
             <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
               <span className="text-white font-semibold mix-blend-difference text-lg select-none">

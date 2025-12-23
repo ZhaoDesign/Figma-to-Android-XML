@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Palette, Info, Languages, Sliders, RotateCw } from 'lucide-react';
+import { Palette, Info, Languages, Sliders, RotateCw, FileCode } from 'lucide-react';
 import { INITIAL_DATA } from './constants';
 import { FigmaLayer, Gradient } from './types';
 import { parseClipboardData } from './services/parser';
@@ -14,6 +14,7 @@ const App: React.FC = () => {
   const [layerData, setLayerData] = useState<FigmaLayer>(INITIAL_DATA);
   const [error, setError] = useState<string | null>(null);
   const [xmlOutput, setXmlOutput] = useState('');
+  const [sourceType, setSourceType] = useState<'css' | 'svg'>('css');
 
   const t = translations[lang];
 
@@ -34,33 +35,34 @@ const App: React.FC = () => {
     const clipboardText = e.clipboardData?.getData('text/plain') || '';
     const clipboardHtml = e.clipboardData?.getData('text/html') || '';
 
-    // Prefer Parsing text if it looks like CSS, otherwise try HTML (which might contain style attr)
-    let textToParse = clipboardText;
+    // Prioritize SVG detection
+    const isSvg = clipboardText.trim().startsWith('<svg') || clipboardText.includes('xmlns="http://www.w3.org/2000/svg"');
 
-    // Check if HTML has a style attribute we can extract
-    if (clipboardHtml.includes('style="')) {
+    // CSS detection
+    let textToParse = clipboardText;
+    if (clipboardHtml.includes('style="') && !isSvg) {
        const match = clipboardHtml.match(/style="([^"]*)"/);
        if (match && match[1]) {
          textToParse = match[1];
        }
     }
 
-    // Validation:
     const likelyCSS =
        textToParse.includes(':') ||
        textToParse.includes('gradient') ||
        textToParse.includes('#') ||
        textToParse.includes('rgb');
 
-    if (!likelyCSS) {
+    if (!isSvg && !likelyCSS) {
       setError(translations[lang].errors.notCss);
       return;
     }
 
     try {
-      const parsed = parseClipboardData(textToParse);
+      const parsed = parseClipboardData(isSvg ? clipboardText : textToParse);
       if (parsed) {
         setLayerData(parsed);
+        setSourceType(isSvg ? 'svg' : 'css');
       } else {
         setError(translations[lang].errors.parseFail);
       }
@@ -81,7 +83,6 @@ const App: React.FC = () => {
   const updateGradientAngle = (angle: number) => {
     setLayerData(prev => {
       const newFills = [...prev.fills];
-      // Try to find the first visible gradient
       const gradIndex = newFills.findIndex(f => f.type === 'gradient' && f.visible);
       if (gradIndex !== -1) {
         const grad = newFills[gradIndex].value as Gradient;
@@ -94,7 +95,6 @@ const App: React.FC = () => {
     });
   };
 
-  // Get current active gradient angle
   const activeGradient = layerData.fills.find(f => f.type === 'gradient' && f.visible);
   const currentAngle = activeGradient ? (activeGradient.value as Gradient).angle || 0 : 0;
 
@@ -132,12 +132,13 @@ const App: React.FC = () => {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">{t.visualPreview}</h2>
+            {sourceType === 'svg' && <span className="text-xs bg-green-900/40 text-green-400 px-2 py-0.5 rounded border border-green-900/60">SVG Mode Active</span>}
             {error && <span className="text-red-400 text-xs bg-red-900/30 px-2 py-1 rounded border border-red-900/50 animate-pulse">{error}</span>}
           </div>
 
           <PreviewCanvas data={layerData} label={t.previewOverlay} />
 
-          {/* Manual Controls Panel */}
+          {/* Manual Controls Panel - Only show warning if NOT in SVG mode */}
           {activeGradient && (
             <div className="bg-gray-850 border border-gray-750 p-4 rounded-lg space-y-3">
                <div className="flex items-center gap-2 text-sm text-gray-300 font-medium">
@@ -159,10 +160,12 @@ const App: React.FC = () => {
                   />
                   <span className="text-xs font-mono text-gray-400 min-w-[3ch]">{Math.round(currentAngle)}°</span>
                </div>
-               <div className="text-xs text-orange-400/80 bg-orange-950/20 p-2 rounded border border-orange-900/30">
-                 ⚠️ <b>Why is manual adjustment needed?</b><br/>
-                 Figma's "Copy as CSS" intentionally <u>removes</u> the rotation angle for radial gradients (see the "warning" in your pasted CSS). This tool detects the shape automatically, but you must use the slider above to match the angle.
-               </div>
+               {sourceType === 'css' && (
+                 <div className="text-xs text-orange-400/80 bg-orange-950/20 p-2 rounded border border-orange-900/30">
+                   ⚠️ <b>Use 'Copy as SVG' for precision</b><br/>
+                   Figma CSS export omits rotation angles. Switching to SVG copy-paste will auto-detect the perfect angle.
+                 </div>
+               )}
             </div>
           )}
 
@@ -183,7 +186,10 @@ const App: React.FC = () => {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">{t.generatedXml}</h2>
-            <span className="text-xs text-gray-600">{t.apiCompatible}</span>
+            <div className="flex gap-2">
+                {sourceType === 'svg' && <FileCode size={14} className="text-green-500 mt-0.5" />}
+                <span className="text-xs text-gray-600">{t.apiCompatible}</span>
+            </div>
           </div>
           <CodeBlock code={xmlOutput} />
         </div>
