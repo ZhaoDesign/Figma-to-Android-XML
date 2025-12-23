@@ -1,7 +1,6 @@
 
-import React, { useMemo } from 'react';
-import { FigmaLayer } from '../types';
-import { decomposeLayer } from '../services/decomposer';
+import React from 'react';
+import { FigmaLayer, Gradient, GradientType } from '../types';
 
 interface Props {
   data: FigmaLayer;
@@ -9,17 +8,159 @@ interface Props {
 }
 
 export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
-  // 1. Use the Decomposer Algorithm to get the Layer Graph
-  const primitives = useMemo(() => decomposeLayer(data), [data]);
-
   const dropShadows = data.shadows
     .filter(s => s.visible && s.type === 'drop')
     .map(s => `${s.x}px ${s.y}px ${s.blur}px ${s.spread}px ${s.color}`)
     .join(', ');
 
-  const borderRadius = typeof data.corners === 'number'
-    ? `${data.corners}px`
+  const borderRadius = typeof data.corners === 'number' 
+    ? `${data.corners}px` 
     : `${data.corners.topLeft}px ${data.corners.topRight}px ${data.corners.bottomRight}px ${data.corners.bottomLeft}px`;
+
+  // Container style
+  const containerStyle: React.CSSProperties = {
+    width: data.width,
+    height: data.height,
+    borderRadius: borderRadius,
+    position: 'relative',
+    transition: 'all 0.3s ease',
+    overflow: 'hidden',
+    isolation: 'isolate',
+    filter: data.blur ? `blur(${data.blur}px)` : undefined,
+    boxShadow: dropShadows,
+  };
+
+  const renderFill = (fill: any, index: number) => {
+    if (!fill.visible) return null;
+
+    if (fill.type === 'solid') {
+      return (
+        <div key={index} style={{
+          position: 'absolute',
+          inset: 0,
+          background: fill.value,
+          opacity: fill.opacity ?? 1,
+          mixBlendMode: (fill.blendMode || 'normal') as any
+        }} />
+      );
+    }
+
+    if (fill.type === 'gradient') {
+      const g = fill.value as Gradient;
+      const sortedStops = [...g.stops].sort((a, b) => a.position - b.position);
+
+      const stopsStr = sortedStops
+        .map(s => `${s.color} ${s.position}%`)
+        .join(', ');
+
+      // Use Pixel values derived from parser
+      const centerX_px = (g.center?.x ?? 50) * data.width / 100;
+      const centerY_px = (g.center?.y ?? 50) * data.height / 100;
+      const rotation = g.angle || 0;
+
+      const isRadialLike = g.type === GradientType.Radial || g.type === GradientType.Diamond;
+      const isAngular = g.type === GradientType.Angular;
+
+      if (isRadialLike || isAngular) {
+
+        let rX_px = data.width / 2;
+        let rY_px = data.height / 2;
+
+        if (g.size) {
+            rX_px = (g.size.x / 100) * data.width;
+            rY_px = (g.size.y / 100) * data.height;
+        }
+
+        // Avoid infinite divs. Clamp the drawing size to something reasonable relative to the shape.
+        // If it's rotated, we need it larger to cover corners, but not infinite.
+        const extendSize = Math.max(data.width, data.height) * 2.5;
+
+        // CSS Gradients
+        let background = '';
+        if (isAngular) {
+           // Conic gradient for angular
+           // Note: CSS conic-gradient starts at 12 o'clock (0deg).
+           // If we parsed it correctly, rotation handles it.
+           background = `conic-gradient(from 0deg at 50% 50%, ${stopsStr})`;
+        } else {
+           // Radial (and Diamond fallback)
+           // Use explicit ellipse size
+           background = `radial-gradient(ellipse ${rX_px.toFixed(2)}px ${rY_px.toFixed(2)}px at center, ${stopsStr})`;
+        }
+
+        const lastColor = sortedStops.length > 0 ? sortedStops[sortedStops.length - 1].color : 'transparent';
+
+        // For Scale Transform on the DIV:
+        // We constructed the radial-gradient with explicit rX/rY.
+        // So we don't need to scale the DIV Y-axis anymore, we just need to rotate it.
+        // Wait, if we use ellipse rX rY in CSS, rotation of the ellipse itself is NOT supported in CSS radial-gradient syntax.
+        // So we MUST draw a circular gradient and scale the DIV, OR draw an elliptical gradient and rotate the DIV.
+        // If we rotate the DIV, the bounding box of the DIV must be large enough.
+
+        // Strategy:
+        // 1. Draw generic radial gradient (circle) or elliptical.
+        // 2. Apply Transform to the DIV to handle rotation and skew.
+
+        // If we use `radial-gradient(ellipse X Y ...)` we cannot rotate the ellipse inside the div.
+        // So we must rotate the div.
+
+        // Revised Strategy for exact visual match:
+        // Draw `radial-gradient(ellipse 50% 50% ...)` on a div sized exactly to 2*rX and 2*rY?
+        // No, keep the big div, use circle, and scale the div.
+        // Base Radius = rX.
+        // Scale Y = rY / rX.
+
+        const scaleY = rX_px > 0 ? rY_px / rX_px : 1;
+        const baseRadius = rX_px;
+
+        // Recalculate background for this strategy
+        if (!isAngular) {
+            background = `radial-gradient(circle ${baseRadius.toFixed(2)}px at center, ${stopsStr})`;
+        }
+
+        return (
+          <React.Fragment key={index}>
+            {/* 1. Background Fill Layer (Last Color) */}
+            <div style={{
+                position: 'absolute',
+                inset: 0,
+                background: lastColor,
+                opacity: fill.opacity ?? 1,
+            }} />
+
+            {/* 2. Gradient Layer */}
+            <div style={{
+              position: 'absolute',
+              left: 0,
+              top: 0,
+              width: extendSize,
+              height: extendSize,
+              transform: `translate3d(${centerX_px}px, ${centerY_px}px, 0) translate3d(-50%, -50%, 0) rotate(${rotation}deg) scale(1, ${isAngular ? 1 : scaleY})`,
+              transformOrigin: '50% 50%',
+              opacity: fill.opacity ?? 1,
+              mixBlendMode: (fill.blendMode || 'normal') as any,
+            }}>
+                <div style={{ width: '100%', height: '100%', background: background }} />
+            </div>
+          </React.Fragment>
+        );
+      }
+
+      // Linear Gradient (Fallback)
+      const background = `linear-gradient(${g.angle || 0}deg, ${stopsStr})`;
+      return (
+        <div key={index} style={{
+          position: 'absolute',
+          inset: 0,
+          background: background,
+          opacity: fill.opacity ?? 1,
+          mixBlendMode: (fill.blendMode || 'normal') as any
+        }} />
+      );
+    }
+
+    return null;
+  };
 
   return (
     <div className="w-full h-full min-h-[400px] flex flex-col items-center justify-center bg-gray-900 relative overflow-hidden border border-gray-750 rounded-xl">
@@ -27,91 +168,20 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
            style={{ backgroundImage: 'radial-gradient(#475569 1px, transparent 1px)', backgroundSize: '20px 20px' }}>
       </div>
 
-      {/* The Canvas */}
-      <div style={{
-          width: data.width,
-          height: data.height,
-          borderRadius: borderRadius,
-          position: 'relative',
-          overflow: 'hidden', // Masking
-          isolation: 'isolate',
-          boxShadow: dropShadows,
-          background: 'transparent'
-      }}>
-          {/* 2. Render Primitives exactly as Android will see them */}
-          {primitives.map(p => {
-              const t = p.transform;
-              // CSS Matrix: matrix(scaleX, skewY, skewX, scaleY, tx, ty)
-              // We decompose scale/rotate separately in our logic, so we reconstruct for CSS
-              // But our 'transform' object has rotation (deg) and scaleX/Y.
-              // We can chain CSS transforms which is easier than matrix math here.
-              // Note: Order matters. Translate -> Rotate -> Scale.
-
-              const transformCss = `translate(${t.x}px, ${t.y}px) rotate(${t.rotation}deg) scale(${t.scaleX}, ${t.scaleY})`;
-
-              const originalType = (p as any).originalType;
-              let background = '';
-
-              if (p.fill.type === 'solid') {
-                  background = p.fill.color;
-              } else {
-                  const stops = p.fill.stops?.map(s => `${s.color} ${s.position}%`).join(', ') || '';
-                  if (originalType === 'linear') {
-                      background = `linear-gradient(to right, ${stops})`;
-                  } else if (originalType === 'angular') {
-                      // Note: Angular 0deg in CSS is Top, in standard math it's Right.
-                      // Our matrix usually handles this, but Conic needs 'from' adjustment sometimes.
-                      // For primitive rendering, we align to the box's X axis.
-                      background = `conic-gradient(from 90deg at 50% 50%, ${stops})`;
-                  } else {
-                      // Radial / Diamond (Rendered as Radial on Primitive)
-                      // Important: The primitive is -1 to 1. Center is 50%.
-                      background = `radial-gradient(circle at 50% 50%, ${stops})`;
-                  }
-              }
-
-              // Geometry
-              // Primitives are usually Unit Boxes (-1 to 1) scaled up.
-              // In CSS, we render a div of size 2x2 px, and scale it?
-              // Or size 100x100 and scale by 0.01?
-              // Let's use 2px x 2px box as the "Unit", so scale=100 means 200px.
-              // Actually, simpler: Render a 2px box anchored at center.
-
-              const isUnitShape = (p.fill.type !== 'solid'); // Solids used full pixel size in decomposer
-              const baseSize = isUnitShape ? 2 : 1;
-              // If solid, w/h are pixel sizes. If gradient, w/h are 2 (unit).
-
-              return (
-                  <div key={p.id} style={{
-                      position: 'absolute',
-                      left: 0, top: 0,
-                      width: p.width + 'px',
-                      height: p.height + 'px',
-                      transformOrigin: '0 0', // We are translating top-left to 't.x, t.y' which is usually center?
-                      // Wait, our Decomposer matrix 'tx/ty' is usually the CENTER of the shape for gradients.
-                      // But CSS transform origin defaults to center of the element.
-                      // If we position at 0,0 and translate to cx,cy, we need to offset by w/2, h/2?
-                      // Let's assume t.x/t.y is the geometric center.
-                      // We place the div such that its center is at 0,0, then apply transform.
-                      marginLeft: -p.width/2 + 'px',
-                      marginTop: -p.height/2 + 'px',
-                      transform: transformCss,
-                      background: background,
-                      opacity: p.fill.opacity,
-                      borderRadius: (p.shape === 'ellipse' || originalType === 'radial' || originalType === 'angular') ? '50%' : '0%',
-                  }} />
-              );
-          })}
-
-          <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
+      <div className="relative">
+         <div style={containerStyle}>
+            {data.fills.map((fill, index) => renderFill(fill, index))}
+            
+            <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
               <span className="text-white font-semibold mix-blend-difference text-lg select-none">
                  {label || 'Preview'}
               </span>
             </div>
+         </div>
       </div>
-
-      <div className="absolute bottom-4 text-xs text-gray-500 font-mono">
-        Layer Graph: {primitives.length} Primitives
+      
+      <div className="absolute bottom-4 text-xs text-gray-500 font-mono flex flex-wrap justify-center gap-x-4 gap-y-1 px-4">
+        <span>Size: {Math.round(data.width)}×{Math.round(data.height)}</span>
       </div>
     </div>
   );
