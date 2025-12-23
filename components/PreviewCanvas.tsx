@@ -56,9 +56,15 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
       // Use Pixel values derived from parser
       const centerX_px = (g.center?.x ?? 50) * data.width / 100;
       const centerY_px = (g.center?.y ?? 50) * data.height / 100;
+      const rotation = g.angle || 0;
 
-      // --- Radial Gradient ---
-      if (g.type === GradientType.Radial) {
+      // --- Radial, Diamond (Mapped to Radial), and Angular ---
+      // We process Angular here too because we want to use the same "Background Fill + Transform" logic
+      // to match Android XML output structure.
+      const isRadialLike = g.type === GradientType.Radial || g.type === GradientType.Diamond;
+      const isAngular = g.type === GradientType.Angular;
+
+      if (isRadialLike || isAngular) {
 
         let rX_px = data.width / 2;
         let scaleY = 1;
@@ -71,9 +77,20 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
             }
         }
 
-        const rotation = g.angle || 0;
         const extendSize = Math.max(data.width, data.height) * 4;
-        const background = `radial-gradient(circle ${rX_px.toFixed(2)}px at center, ${stopsStr})`;
+
+        // CSS Gradients
+        let background = '';
+        if (isAngular) {
+           // Conic gradient for angular
+           // Note: CSS conic-gradient starts at 12 o'clock (0deg).
+           // If our rotation handles it, fine.
+           // `conic-gradient(from 0deg ...)`
+           background = `conic-gradient(from 0deg at 50% 50%, ${stopsStr})`;
+        } else {
+           // Radial (and Diamond fallback)
+           background = `radial-gradient(circle ${rX_px.toFixed(2)}px at center, ${stopsStr})`;
+        }
 
         // Get the last color for the background fill
         const lastColor = sortedStops.length > 0 ? sortedStops[sortedStops.length - 1].color : 'transparent';
@@ -88,13 +105,15 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
                 opacity: fill.opacity ?? 1,
             }} />
 
-            {/* 2. Radial Gradient Layer */}
+            {/* 2. Gradient Layer */}
             <div style={{
               position: 'absolute',
               left: 0,
               top: 0,
               width: extendSize,
               height: extendSize,
+              // Apply transforms: Translate to Center -> Rotate -> Scale
+              // Note: For conic/angular, scaling might distort the angle sweep, but that matches Android sweep gradient scaling behavior in our generator.
               transform: `translate3d(${centerX_px}px, ${centerY_px}px, 0) translate3d(-50%, -50%, 0) rotate(${rotation}deg) scale(1, ${scaleY})`,
               transformOrigin: '50% 50%',
               opacity: fill.opacity ?? 1,
@@ -106,42 +125,7 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
         );
       }
 
-      // --- Angular Gradient ---
-      if (g.type === GradientType.Angular) {
-        let scaleY = (data.height / data.width);
-        if (g.size && g.size.x !== 0) {
-           scaleY = (g.size.y / g.size.x) * (data.height / data.width);
-        }
-        const angle = g.angle !== undefined ? g.angle : 0;
-        const size = Math.max(data.width, data.height) * 4;
-
-        return (
-          <div key={index}
-            style={{
-              position: 'absolute',
-              left: 0,
-              top: 0,
-              width: size,
-              height: size,
-              pointerEvents: 'none',
-              transform: `translate3d(${centerX_px}px, ${centerY_px}px, 0) translate3d(-50%, -50%, 0) scale(1, ${scaleY})`,
-              opacity: fill.opacity ?? 1,
-              mixBlendMode: (fill.blendMode || 'normal') as any,
-              transformOrigin: '50% 50%'
-            }}
-          >
-            <div style={{
-                width: '100%',
-                height: '100%',
-                background: `conic-gradient(from 0deg at 50% 50%, ${stopsStr})`,
-                transform: `rotate(${angle}deg)`,
-                transformOrigin: '50% 50%'
-            }} />
-          </div>
-        );
-      }
-
-      // Linear Gradient
+      // Linear Gradient (Fallback)
       const background = `linear-gradient(${g.angle || 0}deg, ${stopsStr})`;
       return (
         <div key={index} style={{

@@ -92,14 +92,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
     // Global Clipping Path
     xml += `    <clip-path android:pathData="${mainPath}" />\n\n`;
 
-    // Fills (Figma stack order: Bottom is first in array? No, usually Top is first.
-    // Parser iterates array. SVG order: Bottom is first.
-    // parser.ts fills push order: iterates shapes. SVG first shape is bottom.
-    // So fills[0] is bottom.
-    // Android draws in order (Painter's algorithm), so we want bottom first.
-    // layer.fills comes from parser in order of SVG (Bottom -> Top).
-    // So we iterate regularly.
-
+    // Fills
     layer.fills.forEach((fill, idx) => {
         if (!fill.visible) return;
 
@@ -115,24 +108,24 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
             const centerX = (g.center?.x ?? 50) * w / 100;
             const centerY = (g.center?.y ?? 50) * h / 100;
 
-            if (g.type === GradientType.Radial) {
-                // --- RADIAL GRADIENT LOGIC ---
-                // Feature request: Fill the background with the outermost color
+            // Shared Logic for Radial, Angular, and Diamond (mapped to Radial)
+            // They all benefit from the "Background Fill" + "Oversized Transformed Path" technique
+            const isRadialLike = g.type === GradientType.Radial || g.type === GradientType.Diamond;
+            const isAngular = g.type === GradientType.Angular;
+
+            if (isRadialLike || isAngular) {
                 const sortedStops = [...g.stops].sort((a,b) => a.position - b.position);
                 const lastStop = sortedStops[sortedStops.length - 1];
 
-                // Only fill background if the last stop is NOT transparent
-                // Check hex alpha. If it is < 1 or undefined, we might not want to fill?
-                // Actually, if we want to "extend" the gradient, we should fill with the exact last color.
-                // If last color is transparent, we fill with transparent, which is fine (invisible).
-
+                // 1. Draw Background (Fill with last stop color)
+                // This prevents jagged edges at clamp boundaries
                 if (lastStop) {
-                    xml += `    <!-- Radial Background (Fill with last stop color) -->\n`;
+                    xml += `    <!-- Background Fill (Last Color) -->\n`;
                     xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z"\n`;
                     xml += `          android:fillColor="${toAndroidHex(lastStop.color, lastStop.opacity)}" />\n`;
                 }
 
-                // Draw the Gradient Layer on top
+                // 2. Draw Gradient on Top
                 let radiusX = (w / 2);
                 let radiusY = (h / 2);
 
@@ -145,6 +138,13 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 const scaleY = radiusY / radiusX;
                 const rotation = g.angle || 0;
 
+                // Adjust rotation for Angular (Figma starts at 12 o'clock/90deg?, Android Sweep starts at 3 o'clock/0deg)
+                // Figma Angular often comes with a transform that handles this.
+                // If it's a standard CSS parse, `conic-gradient(from 90deg)` means start at 12.
+                // Android `sweep` starts at 3. So 90deg offset might be needed if not handled by matrix.
+                // However, `data-figma-gradient-fill` matrix usually handles it.
+                // For `Diamond`, we map to `radial` as Android has no Diamond support.
+
                 xml += `    <group android:translateX="${centerX.toFixed(2)}" android:translateY="${centerY.toFixed(2)}">\n`;
                 xml += `        <group android:rotation="${rotation.toFixed(2)}">\n`;
                 xml += `            <group android:scaleY="${scaleY.toFixed(6)}">\n`;
@@ -153,9 +153,17 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
 
                 xml += `                <path android:pathData="M${(-drawSize).toFixed(1)},${(-drawSize).toFixed(1)} h${(drawSize * 2).toFixed(1)} v${(drawSize * 2).toFixed(1)} h-${(drawSize * 2).toFixed(1)} z">\n`;
                 xml += `                    <aapt:attr name="android:fillColor">\n`;
-                xml += `                        <gradient android:type="radial"\n`;
-                xml += `                                  android:centerX="0" android:centerY="0"\n`;
-                xml += `                                  android:gradientRadius="${baseRadius.toFixed(2)}">\n`;
+
+                if (isAngular) {
+                    xml += `                        <gradient android:type="sweep"\n`;
+                    xml += `                                  android:centerX="0" android:centerY="0">\n`;
+                } else {
+                    // Radial (and Diamond fallback)
+                    xml += `                        <gradient android:type="radial"\n`;
+                    xml += `                                  android:centerX="0" android:centerY="0"\n`;
+                    xml += `                                  android:gradientRadius="${baseRadius.toFixed(2)}">\n`;
+                }
+
                 sortedStops.forEach(stop => {
                     xml += `                            <item android:color="${toAndroidHex(stop.color, stop.opacity)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
                 });
@@ -167,32 +175,6 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 xml += `        </group>\n`;
                 xml += `    </group>\n`;
 
-            } else if (g.type === GradientType.Angular) {
-                 // --- ANGULAR GRADIENT LOGIC ---
-                let scaleY = h / w;
-                if (g.size && g.size.x !== 0) {
-                    scaleY = (g.size.y / g.size.x) * (h / w);
-                }
-                const rotation = (g.angle || 0) - 90;
-
-                xml += `    <group android:translateX="${centerX.toFixed(2)}" android:translateY="${centerY.toFixed(2)}">\n`;
-                xml += `        <group android:scaleY="${scaleY.toFixed(6)}">\n`;
-                xml += `            <group android:rotation="${rotation.toFixed(2)}">\n`;
-
-                const sweepSize = Math.max(w, h) * 4;
-                xml += `                <path android:pathData="M${(-sweepSize).toFixed(1)},${(-sweepSize).toFixed(1)} h${(sweepSize * 2).toFixed(1)} v${(sweepSize * 2).toFixed(1)} h-${(sweepSize * 2).toFixed(1)} z">\n`;
-                xml += `                    <aapt:attr name="android:fillColor">\n`;
-                xml += `                        <gradient android:type="sweep"\n`;
-                xml += `                                  android:centerX="0" android:centerY="0">\n`;
-                g.stops.sort((a,b) => a.position - b.position).forEach(stop => {
-                    xml += `                            <item android:color="${toAndroidHex(stop.color, stop.opacity)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
-                });
-                xml += `                        </gradient>\n`;
-                xml += `                    </aapt:attr>\n`;
-                xml += `                </path>\n`;
-                xml += `            </group>\n`;
-                xml += `        </group>\n`;
-                xml += `    </group>\n`;
             } else {
                 // --- LINEAR GRADIENT ---
                 xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z">\n`;

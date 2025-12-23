@@ -90,11 +90,6 @@ const parseSvgTransform = (transformStr: string): TransformData => {
 
   // Decompose Matrix
   // Assume matrix is TRS (Translate * Rotate * Scale)
-  // [ sx*cos  -sy*sin  tx ]
-  // [ sx*sin   sy*cos  ty ]
-  // Note: This decomposition assumes no Skew and that Scale is applied before Rotate in standard linear algebra,
-  // but SVG transform list order is application order.
-
   const scaleX = Math.sqrt(m.a * m.a + m.b * m.b);
   const scaleY = Math.sqrt(m.c * m.c + m.d * m.d);
 
@@ -102,6 +97,71 @@ const parseSvgTransform = (transformStr: string): TransformData => {
   let rotationDeg = rotationRad * 180 / Math.PI;
 
   return { rotation: rotationDeg, scaleX, scaleY, translateX: m.e, translateY: m.f };
+};
+
+const parseFigmaGradientFill = (jsonStr: string, width: number, height: number): Gradient | null => {
+  try {
+    const data = JSON.parse(jsonStr);
+    if (!data) return null;
+
+    let type: GradientType = GradientType.Linear;
+    if (data.type === 'GRADIENT_RADIAL') type = GradientType.Radial;
+    if (data.type === 'GRADIENT_ANGULAR') type = GradientType.Angular;
+    if (data.type === 'GRADIENT_DIAMOND') type = GradientType.Diamond;
+
+    const stops: ColorStop[] = (data.stops || []).map((s: any) => ({
+      color: `rgba(${Math.round(s.color.r * 255)}, ${Math.round(s.color.g * 255)}, ${Math.round(s.color.b * 255)}, ${s.color.a})`,
+      position: s.position * 100
+    }));
+
+    // Figma Transform Matrix
+    // [ m00 m01 m02 ]
+    // [ m10 m11 m12 ]
+    const t = data.transform || {};
+    const m00 = t.m00 || 1;
+    const m01 = t.m01 || 0;
+    const m02 = t.m02 || 0;
+    const m10 = t.m10 || 0;
+    const m11 = t.m11 || 1;
+    const m12 = t.m12 || 0;
+
+    // Center (Translate)
+    // Note: These values are often in absolute pixels relative to the SVG/ViewBox origin
+    const centerX = m02;
+    const centerY = m12;
+
+    // Rotation
+    // atan2(m10, m00)
+    const rotationRad = Math.atan2(m10, m00);
+    const rotationDeg = rotationRad * 180 / Math.PI;
+
+    // Scale (Radius/Size)
+    // Vector lengths of columns
+    const scaleX_val = Math.sqrt(m00*m00 + m10*m10);
+    const scaleY_val = Math.sqrt(m01*m01 + m11*m11);
+
+    // Convert to percentages relative to layer dimensions
+    const cxPct = (centerX / width) * 100;
+    const cyPct = (centerY / height) * 100;
+
+    // Size Pct
+    // This is rough approximation. Figma defines gradient on 0-1 unit square.
+    // The matrix scales that unit square to pixels.
+    const sxPct = (scaleX_val / width) * 100;
+    const syPct = (scaleY_val / height) * 100;
+
+    return {
+      type,
+      stops,
+      angle: rotationDeg,
+      center: { x: cxPct, y: cyPct },
+      size: { x: sxPct, y: syPct }
+    };
+
+  } catch (e) {
+    console.warn('Failed to parse figma gradient json', e);
+    return null;
+  }
 };
 
 const getPathBoundingBox = (d: string) => {
@@ -161,7 +221,7 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
   const shapes = Array.from(doc.querySelectorAll('path, rect'));
   if (shapes.length === 0) return null;
 
-  // 2. Determine Dimensions & Bounding Box (Using the first valid shape or ViewBox)
+  // 2. Determine Dimensions & Bounding Box
   let realX = 0, realY = 0, realW = 0, realH = 0;
 
   const mainEl = shapes[0];
@@ -220,17 +280,26 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
       }
   }
 
-  // 5. Fills - Iterate over ALL shapes if they are stacked
+  // 5. Fills
   const fills: Fill[] = [];
   const defs = doc.querySelector('defs');
 
   shapes.forEach(shape => {
-      // Basic check: only include shapes that match the main dimensions (simple layer stacking)
-      // This avoids parsing random icons as fills.
-      // For now, we trust Figma's "Copy as SVG" which typically outputs exactly the selected layer's fills as paths.
-
       const fillAttr = shape.getAttribute('fill');
+      const figmaGradientAttr = shape.getAttribute('data-figma-gradient-fill');
       const opacityAttr = shape.getAttribute('fill-opacity') || shape.getAttribute('opacity') || '1';
+
+      if (figmaGradientAttr) {
+          const grad = parseFigmaGradientFill(figmaGradientAttr, realW, realH);
+          if (grad) {
+              fills.push({
+                  type: 'gradient',
+                  visible: true,
+                  value: grad
+              });
+              return; // Priority over 'fill' attribute
+          }
+      }
 
       if (fillAttr && fillAttr !== 'none') {
           if (fillAttr.startsWith('url(')) {
@@ -246,7 +315,6 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
                       const offsetStr = stop.getAttribute('offset') || '0';
                       let offset = parseFloat(offsetStr);
                       if (offsetStr.includes('%')) offset /= 100;
-
                       stops.push({
                           color,
                           position: offset * 100,
@@ -254,7 +322,6 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
                       });
                   });
 
-                  // Transform Processing
                   const transformAttr = gradientEl.getAttribute('gradientTransform');
                   let angle = 0;
                   let center = { x: 50, y: 50 };
@@ -268,26 +335,19 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
                       const y2 = gradientEl.getAttribute('y2');
 
                       if (x1 !== null && y1 !== null && x2 !== null && y2 !== null) {
-                          // Handle UserSpaceOnUse or ObjectBoundingBox
-                          // For now assuming these are absolute if userSpaceOnUse, or need conversion
                           const units = gradientEl.getAttribute('gradientUnits');
                           let sx = parseFloat(x1), sy = parseFloat(y1), ex = parseFloat(x2), ey = parseFloat(y2);
 
                           if (units !== 'userSpaceOnUse') {
-                              // Convert % to pixels if needed, or assume 0-1
                               if (x1.includes('%')) sx = parseFloat(x1) / 100 * realW;
                               if (y1.includes('%')) sy = parseFloat(y1) / 100 * realH;
                               if (x2.includes('%')) ex = parseFloat(x2) / 100 * realW;
                               if (y2.includes('%')) ey = parseFloat(y2) / 100 * realH;
                           }
-
-                          // Offset by the shape's position to make them local to the drawable (0,0)
-                          // If UserSpaceOnUse, coordinates are global.
                           if (units === 'userSpaceOnUse') {
                               sx -= realX; sy -= realY;
                               ex -= realX; ey -= realY;
                           }
-
                           handles = { start: { x: sx, y: sy }, end: { x: ex, y: ey } };
                       }
                   }
