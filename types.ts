@@ -12,17 +12,32 @@ export interface ColorStop {
   opacity?: number;
 }
 
+export interface GradientTransform {
+  a: number; // m00 (Scale X / Cos)
+  b: number; // m10 (Skew Y / Sin)
+  c: number; // m01 (Skew X / -Sin)
+  d: number; // m11 (Scale Y / Cos)
+  tx: number; // m02 (Translate X)
+  ty: number; // m12 (Translate Y)
+  // Derived helper values for convenience, though raw matrix is source of truth
+  rotation: number;
+  scaleX: number;
+  scaleY: number;
+}
+
 export interface Gradient {
   type: GradientType;
   stops: ColorStop[];
-  angle?: number; // Linear: direction; Angular: start angle; Radial: rotation angle
+  // Legacy/Fallback fields
+  angle?: number;
   center?: { x: number; y: number };
-  size?: { x: number; y: number }; // Percentage values for elliptical axes
+  size?: { x: number; y: number };
   handles?: {
     start: { x: number; y: number };
     end: { x: number; y: number };
   };
-  rawGeometry?: string;
+  // The Source of Truth for fidelity
+  transform?: GradientTransform;
 }
 
 export interface Fill {
@@ -31,7 +46,7 @@ export interface Fill {
   opacity?: number;
   blendMode?: string;
   visible: boolean;
-  assetUrl?: string; // For textures/noise exported as images
+  assetUrl?: string;
 }
 
 export interface Shadow {
@@ -59,6 +74,6 @@ export interface FigmaLayer {
   corners: Corners | number;
   shadows: Shadow[];
   opacity: number;
-  blur?: number; // Layer blur (filter: blur)
-  backdropBlur?: number; // Background blur (backdrop-filter: blur)
+  blur?: number;
+  backdropBlur?: number;
 }

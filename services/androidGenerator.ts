@@ -73,7 +73,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
     const mainPath = getRoundedRectPath(w, h, layer.corners);
 
     let xml = `<?xml version="1.0" encoding="utf-8"?>\n`;
-    xml += `<!-- Generated from Figma Advanced (Matrix Mode) -->\n`;
+    xml += `<!-- Generated from Figma Advanced (Matrix Re-projection) -->\n`;
     xml += `<vector xmlns:android="http://schemas.android.com/apk/res/android"\n`;
     xml += `    xmlns:aapt="http://schemas.android.com/aapt"\n`;
     xml += `    android:width="${w}dp" android:height="${h}dp"\n`;
@@ -89,7 +89,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
         xml += `    </group>\n`;
     });
 
-    // Global Clipping Path
+    // Global Clipping Path: This is KEY. It clips the massive rectangles we draw below.
     xml += `    <clip-path android:pathData="${mainPath}" />\n\n`;
 
     // Fills
@@ -103,66 +103,46 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
             xml += `          android:fillColor="${toAndroidHex(fill.value as string)}" />\n`;
         } else if (fill.type === 'gradient') {
             const g = fill.value as Gradient;
+            const sortedStops = [...g.stops].sort((a,b) => a.position - b.position);
 
-            // Calculate absolute pixel values from percentages
-            const centerX = (g.center?.x ?? 50) * w / 100;
-            const centerY = (g.center?.y ?? 50) * h / 100;
+            // --- Strategy: Matrix Re-projection using Nested Groups ---
+            if (g.transform && (g.type === GradientType.Radial || g.type === GradientType.Diamond || g.type === GradientType.Angular)) {
+                // Deconstruct Matrix
+                const t = g.transform;
 
-            const isRadialLike = g.type === GradientType.Radial || g.type === GradientType.Diamond;
-            const isAngular = g.type === GradientType.Angular;
+                // For Angular, Android 0deg is 3 o'clock. Figma 0deg is X axis. They match geometrically.
+                // However, Figma's angular gradient matrix usually scales the unit circle to the bounding box aspect ratio.
+                // We use the exact matrix scale to reproduce this "Elliptical Sweep" effect.
 
-            if (isRadialLike || isAngular) {
-                const sortedStops = [...g.stops].sort((a,b) => a.position - b.position);
-                const lastStop = sortedStops[sortedStops.length - 1];
+                xml += `    <group android:translateX="${t.tx.toFixed(2)}" android:translateY="${t.ty.toFixed(2)}">\n`;
+                xml += `        <group android:rotation="${t.rotation.toFixed(2)}">\n`;
+                xml += `            <group android:scaleX="${t.scaleX.toFixed(4)}" android:scaleY="${t.scaleY.toFixed(4)}">\n`;
 
-                // 1. Background Fill (Simulate Clamp)
-                if (lastStop) {
-                    xml += `    <!-- Background Fill (Last Color) -->\n`;
-                    xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z"\n`;
-                    xml += `          android:fillColor="${toAndroidHex(lastStop.color, lastStop.opacity)}" />\n`;
-                }
+                // Draw a canonical unit box (or large box) in the Local Gradient Space.
+                // The groups above transform this box to the correct pixel location, rotation, and size.
+                // We use a large rectangle (e.g. -1 to 1 normalized, or larger to cover) to ensure coverage.
+                // Since our transform scales Unit -> Pixels, drawing -1 to 1 covers the gradient area.
+                // For Radial: Center is 0,0. Radius is 1 (covered by scale).
+                // We draw a huge rectangle because the gradient might be tiled or clamp, and we want to fill the shape.
+                // Android Gradient is defined inside this path.
 
-                // 2. Draw Gradient on Top
-                let radiusX = (w / 2);
-                let radiusY = (h / 2);
-
-                if (g.size) {
-                    radiusX = (g.size.x / 100) * w;
-                    radiusY = (g.size.y / 100) * h;
-                }
-
-                const baseRadius = radiusX > 0.1 ? radiusX : 0.1;
-                // For Angular gradients, we force 1:1 ratio (circular sweep) to avoid distortion
-                const scaleY = isAngular ? 1 : (radiusY / baseRadius);
-
-                let rotation = g.angle || 0;
-
-                // Note: For Angular, the parser now returns the "unscaled" visual angle.
-                // Android 0 is East. Figma "Top" corresponds to -90.
-                // If parsed angle is e.g. -81 (North-ish), we use it directly.
-                // We no longer subtract 90 because the parser already handles vector orientation.
-
-                xml += `    <group android:translateX="${centerX.toFixed(2)}" android:translateY="${centerY.toFixed(2)}">\n`;
-                xml += `        <group android:rotation="${rotation.toFixed(2)}">\n`;
-                xml += `            <group android:scaleY="${scaleY.toFixed(6)}">\n`;
-
-                const drawSize = Math.max(w, h) * 4;
-
-                xml += `                <path android:pathData="M${(-drawSize).toFixed(1)},${(-drawSize).toFixed(1)} h${(drawSize * 2).toFixed(1)} v${(drawSize * 2).toFixed(1)} h-${(drawSize * 2).toFixed(1)} z">\n`;
+                xml += `                <path android:pathData="M-1 -1 H 2 V 2 H -2 Z" android:fillType="nonZero">\n`;
                 xml += `                    <aapt:attr name="android:fillColor">\n`;
 
-                if (isAngular) {
+                if (g.type === GradientType.Angular) {
                     xml += `                        <gradient android:type="sweep"\n`;
                     xml += `                                  android:centerX="0" android:centerY="0">\n`;
                 } else {
+                    // Radial or Diamond (mapped to radial)
                     xml += `                        <gradient android:type="radial"\n`;
                     xml += `                                  android:centerX="0" android:centerY="0"\n`;
-                    xml += `                                  android:gradientRadius="${baseRadius.toFixed(2)}">\n`;
+                    xml += `                                  android:gradientRadius="1">\n`;
                 }
 
                 sortedStops.forEach(stop => {
                     xml += `                            <item android:color="${toAndroidHex(stop.color, stop.opacity)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
                 });
+
                 xml += `                        </gradient>\n`;
                 xml += `                    </aapt:attr>\n`;
                 xml += `                </path>\n`;
@@ -172,30 +152,41 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 xml += `    </group>\n`;
 
             } else {
-                // --- LINEAR GRADIENT ---
+                // --- Linear Gradient (Optimized) ---
+                // For linear, we don't need groups, just start/end coordinates.
+                // P_start = M * (0, 0)
+                // P_end = M * (1, 0)
+                let sx = 0, sy = 0, ex = 0, ey = 0;
+
+                if (g.transform) {
+                   // Linear Gradient in Figma is along the X axis of the unit square
+                   const t = g.transform;
+                   // (0,0) -> (tx, ty)
+                   sx = t.tx;
+                   sy = t.ty;
+                   // (1,0) -> (tx + a, ty + b)
+                   // Note: transform.a is scaleX * cos(rot), transform.b is scaleX * sin(rot)
+                   // So this vector represents the primary axis
+                   ex = t.tx + t.a;
+                   ey = t.ty + t.b;
+                } else {
+                   // Fallback for legacy CSS
+                   const rad = ((g.angle || 0) - 90) * Math.PI / 180;
+                   const cx = (g.center?.x ?? 50) * w / 100;
+                   const cy = (g.center?.y ?? 50) * h / 100;
+                   const len = Math.max(w, h); // Approx
+                   sx = cx - Math.cos(rad) * len;
+                   sy = cy - Math.sin(rad) * len;
+                   ex = cx + Math.cos(rad) * len;
+                   ey = cy + Math.sin(rad) * len;
+                }
+
                 xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z">\n`;
                 xml += `        <aapt:attr name="android:fillColor">\n`;
                 xml += `            <gradient android:type="linear"\n`;
-
-                let startX, startY, endX, endY;
-
-                if (g.handles) {
-                    startX = g.handles.start.x;
-                    startY = g.handles.start.y;
-                    endX = g.handles.end.x;
-                    endY = g.handles.end.y;
-                } else {
-                    const rad = ((g.angle || 0) - 90) * Math.PI / 180;
-                    const length = Math.sqrt(w*w + h*h) * 2;
-                    startX = centerX - (Math.cos(rad) * length / 2);
-                    startY = centerY - (Math.sin(rad) * length / 2);
-                    endX = centerX + (Math.cos(rad) * length / 2);
-                    endY = centerY + (Math.sin(rad) * length / 2);
-                }
-
-                xml += `                      android:startX="${startX.toFixed(2)}" android:startY="${startY.toFixed(2)}"\n`;
-                xml += `                      android:endX="${endX.toFixed(2)}" android:endY="${endY.toFixed(2)}">\n`;
-                g.stops.sort((a,b) => a.position - b.position).forEach(stop => {
+                xml += `                      android:startX="${sx.toFixed(2)}" android:startY="${sy.toFixed(2)}"\n`;
+                xml += `                      android:endX="${ex.toFixed(2)}" android:endY="${ey.toFixed(2)}">\n`;
+                sortedStops.forEach(stop => {
                     xml += `                <item android:color="${toAndroidHex(stop.color, stop.opacity)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
                 });
                 xml += `            </gradient>\n`;

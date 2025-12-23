@@ -48,106 +48,133 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
     if (fill.type === 'gradient') {
       const g = fill.value as Gradient;
       const sortedStops = [...g.stops].sort((a, b) => a.position - b.position);
-
-      const stopsStr = sortedStops
-        .map(s => `${s.color} ${s.position}%`)
-        .join(', ');
-
-      // Use Pixel values derived from parser
-      const centerX_px = (g.center?.x ?? 50) * data.width / 100;
-      const centerY_px = (g.center?.y ?? 50) * data.height / 100;
-      const rotation = g.angle || 0;
+      const stopsStr = sortedStops.map(s => `${s.color} ${s.position}%`).join(', ');
 
       const isRadialLike = g.type === GradientType.Radial || g.type === GradientType.Diamond;
       const isAngular = g.type === GradientType.Angular;
+      const isLinear = g.type === GradientType.Linear;
 
-      if (isRadialLike || isAngular) {
+      // --- Matrix Re-projection Mode (High Fidelity) ---
+      if (g.transform) {
+          const t = g.transform;
 
-        let rX_px = data.width / 2;
-        let rY_px = data.height / 2;
+          // Construct the CSS Transform Matrix: matrix(a, b, c, d, tx, ty)
+          // We apply this to a 1x1 unit box.
+          // Note: CSS matrix is matrix(a, b, c, d, tx, ty) corresponding to the column-major order of:
+          // | a c tx |
+          // | b d ty |
+          // Our `decomposeMatrix` returned a,b (primary axis), c,d (secondary axis).
+          // Figma/SVG Matrix:
+          // | m00 m01 m02 | -> | a c tx |
+          // | m10 m11 m12 | -> | b d ty |
+          // So CSS matrix is exactly: matrix(t.a, t.b, t.c, t.d, t.tx, t.ty)
 
-        if (g.size) {
-            rX_px = (g.size.x / 100) * data.width;
-            rY_px = (g.size.y / 100) * data.height;
-        }
+          const matrixCss = `matrix(${t.a}, ${t.b}, ${t.c}, ${t.d}, ${t.tx}, ${t.ty})`;
 
-        // Avoid infinite divs. Clamp the drawing size to something reasonable relative to the shape.
-        // If it's rotated, we need it larger to cover corners, but not infinite.
-        const extendSize = Math.max(data.width, data.height) * 2.5;
+          // Gradient Definition inside the Unit Box
+          // For Radial: Center 0,0 (Top Left of 1x1 box? No).
+          // Figma gradient space usually defines 0,0 as origin and 1,0 as X-axis extent.
+          // Radial: Center at 0,0, R=1. But CSS gradients are drawn within the box.
+          // If we use a 1x1px box, top-left is 0,0.
+          // We need a way to define "Center is at 0,0" for CSS.
+          // `radial-gradient(circle at 0px 0px, ...)` works.
 
-        // CSS Gradients
-        let background = '';
-        if (isAngular) {
-           // Conic gradient for angular
-           // Note: CSS conic-gradient starts at 12 o'clock (0deg).
-           // If we parsed it correctly, rotation handles it.
-           background = `conic-gradient(from 0deg at 50% 50%, ${stopsStr})`;
-        } else {
-           // Radial (and Diamond fallback)
-           // Use explicit ellipse size
-           background = `radial-gradient(ellipse ${rX_px.toFixed(2)}px ${rY_px.toFixed(2)}px at center, ${stopsStr})`;
-        }
+          let background = '';
+          if (isAngular) {
+              // Conic starts at 12 o'clock (Y-up), Figma at 3 o'clock (X-right).
+              // We need to rotate -90deg (or from 90deg) to align.
+              // BUT, the Matrix rotation already handles the axis direction.
+              // If the matrix aligns the X-axis (0 deg), we just need the CSS gradient to start at 0deg relative to that axis.
+              // CSS conic 0deg is Top. To make it Right, we add `from 90deg`.
+              background = `conic-gradient(from 90deg at 0px 0px, ${stopsStr})`;
+          } else if (isRadialLike) {
+              // Radial: Circle at origin, radius 1px (covering the unit vector).
+              background = `radial-gradient(circle 1px at 0px 0px, ${stopsStr})`;
+          } else {
+              // Linear: From 0,0 to 1,0.
+              // `linear-gradient(to right, ...)` goes 0% to 100% of the box width.
+              // Since box is 1px wide, it covers 0 to 1. Perfect.
+              // However, we need to ensure it doesn't repeat if the shape is larger?
+              // Actually, we usually want it to extend/clamp.
+              background = `linear-gradient(to right, ${stopsStr})`;
+          }
 
-        const lastColor = sortedStops.length > 0 ? sortedStops[sortedStops.length - 1].color : 'transparent';
+          // To cover the whole shape (which might be 300px wide), we can't just use a 1x1px div.
+          // The gradient will clamp/repeat outside.
+          // Better strategy:
+          // Use a very large div (e.g. 2000x2000), centered at 0,0 of the transform?
+          // No, the transform `matrix` includes translation `tx`.
+          // So if we apply the matrix to a div at 0,0:
+          // The div's local (0,0) moves to (tx, ty).
+          // The gradient is drawn relative to the div's local (0,0).
+          // So we need a div that extends from e.g. -1000 to +1000 relative to its own origin.
+          // But `width` and `height` must be positive.
 
-        // For Scale Transform on the DIV:
-        // We constructed the radial-gradient with explicit rX/rY.
-        // So we don't need to scale the DIV Y-axis anymore, we just need to rotate it.
-        // Wait, if we use ellipse rX rY in CSS, rotation of the ellipse itself is NOT supported in CSS radial-gradient syntax.
-        // So we MUST draw a circular gradient and scale the DIV, OR draw an elliptical gradient and rotate the DIV.
-        // If we rotate the DIV, the bounding box of the DIV must be large enough.
+          // Solution:
+          // 1. Create a div at 0,0 with 0x0 size.
+          // 2. Apply matrix transform.
+          // 3. Inside, use an ::after or child that is HUGE, positioned at -1000,-1000.
+          // 4. BUT, the gradient must be fixed to the transformed coordinate system.
 
-        // Strategy:
-        // 1. Draw generic radial gradient (circle) or elliptical.
-        // 2. Apply Transform to the DIV to handle rotation and skew.
+          // Even Simpler:
+          // Just use a 1px x 1px div. Apply `overflow: visible`.
+          // The gradient is background. Background repeats by default.
+          // Use `background-size: 2000px 2000px`? No.
+          // Linear: `linear-gradient` is infinite perpendicular to axis.
+          // Radial: We need it to extend.
 
-        // If we use `radial-gradient(ellipse X Y ...)` we cannot rotate the ellipse inside the div.
-        // So we must rotate the div.
+          // Let's go with the `overflow: visible` + large child approach.
+          // The container applies the matrix.
+          // The child provides the surface.
 
-        // Revised Strategy for exact visual match:
-        // Draw `radial-gradient(ellipse 50% 50% ...)` on a div sized exactly to 2*rX and 2*rY?
-        // No, keep the big div, use circle, and scale the div.
-        // Base Radius = rX.
-        // Scale Y = rY / rX.
+          // Wait, `matrix` scales the child too.
+          // If we have a 1px box scaled by 100 (radius), it becomes 100px.
+          // We need to fill a 300px button.
+          // So we should make the box large enough to cover the button *in the local gradient space*.
+          // Since local space is "unit" (approx 0-1), a box of -5 to +5 is likely enough.
 
-        const scaleY = rX_px > 0 ? rY_px / rX_px : 1;
-        const baseRadius = rX_px;
-
-        // Recalculate background for this strategy
-        if (!isAngular) {
-            background = `radial-gradient(circle ${baseRadius.toFixed(2)}px at center, ${stopsStr})`;
-        }
-
-        return (
-          <React.Fragment key={index}>
-            {/* 1. Background Fill Layer (Last Color) */}
-            <div style={{
-                position: 'absolute',
-                inset: 0,
-                background: lastColor,
-                opacity: fill.opacity ?? 1,
-            }} />
-
-            {/* 2. Gradient Layer */}
-            <div style={{
-              position: 'absolute',
-              left: 0,
-              top: 0,
-              width: extendSize,
-              height: extendSize,
-              transform: `translate3d(${centerX_px}px, ${centerY_px}px, 0) translate3d(-50%, -50%, 0) rotate(${rotation}deg) scale(1, ${isAngular ? 1 : scaleY})`,
-              transformOrigin: '50% 50%',
-              opacity: fill.opacity ?? 1,
-              mixBlendMode: (fill.blendMode || 'normal') as any,
-            }}>
-                <div style={{ width: '100%', height: '100%', background: background }} />
-            </div>
-          </React.Fragment>
-        );
+          return (
+             <div key={index} style={{
+                 position: 'absolute',
+                 left: 0, top: 0,
+                 width: '1px', height: '1px', // The Anchor
+                 transformOrigin: '0 0',
+                 transform: matrixCss,
+                 opacity: fill.opacity ?? 1,
+                 mixBlendMode: (fill.blendMode || 'normal') as any,
+                 pointerEvents: 'none'
+             }}>
+                 {/* The Surface: Large enough to cover the viewport when inversely transformed.
+                     Since we don't know the inverse, we just go BIG.
+                     -50 to 50 in unit space covers 50x radius. Should be enough.
+                 */}
+                 <div style={{
+                     position: 'absolute',
+                     left: '-50px', top: '-50px',
+                     width: '100px', height: '100px',
+                     background: background,
+                     // Repeat helps fill if 50x isn't enough, but usually pad/clamp is desired.
+                     // CSS Radial defaults to 'farthest-corner' if no size, but we specified `1px`.
+                     // Outside that 1px circle, it's the last color (pad) if we don't say no-repeat.
+                 }} />
+             </div>
+          );
       }
 
-      // Linear Gradient (Fallback)
-      const background = `linear-gradient(${g.angle || 0}deg, ${stopsStr})`;
+      // --- Fallback Mode (Legacy/CSS Parse) ---
+      // (Keep existing fallback logic for pure CSS pastes)
+      let background = '';
+      if (isAngular) {
+          background = `conic-gradient(from ${(g.angle||0)}deg at ${(g.center?.x??50)}% ${(g.center?.y??50)}%, ${stopsStr})`;
+      } else if (isRadialLike) {
+           const cx = (g.center?.x ?? 50) + '%';
+           const cy = (g.center?.y ?? 50) + '%';
+           // Simple radial
+           background = `radial-gradient(ellipse at ${cx} ${cy}, ${stopsStr})`;
+      } else {
+          background = `linear-gradient(${g.angle || 0}deg, ${stopsStr})`;
+      }
+
       return (
         <div key={index} style={{
           position: 'absolute',
