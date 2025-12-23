@@ -51,8 +51,6 @@ const decomposeGradient = (gradient: Gradient, layerW: number, layerH: number, o
     const t = gradient.transform || { a:1, b:0, c:0, d:1, tx:0, ty:0, rotation:0, scaleX:1, scaleY:1 };
 
     // 1. Normalize Matrix Transform
-    // We want to transform the Unit Square (0,0 -> 1,1) or Unit Center (-0.5 -> 0.5) to Pixel Space.
-    // Figma Matrix is typically defined relative to the layer bounds.
 
     const baseTransform = {
         x: t.tx,
@@ -62,24 +60,23 @@ const decomposeGradient = (gradient: Gradient, layerW: number, layerH: number, o
         scaleY: t.scaleY
     };
 
+    // Constant: Large Canvas Size for Gradient Primitives
+    // We use a large unit size (100 -> -50 to 50) instead of (2 -> -1 to 1).
+    // This ensures that even if the matrix scale is small (e.g. scaleY=18),
+    // the drawn shape (100 * 18 = 1800px) is large enough to cover the button height (e.g. 128px).
+    const LARGE_CANVAS = 100;
+
     // 2. Decompose based on Type
 
     if (gradient.type === GradientType.Diamond) {
         // --- DIAMOND STRATEGY ---
-        // A diamond is just a Rectangle rotated 45 degrees relative to the gradient transform.
-        // We use a Rect primitive.
+        const p = createPrimitive('rect', LARGE_CANVAS, LARGE_CANVAS);
 
-        const p = createPrimitive('rect', 2, 2); // Unit box size 2 (-1 to 1)
-
-        // Combine rotations: Gradient Rotation + 45 deg
         p.transform = {
             ...baseTransform,
             rotation: baseTransform.rotation + 45
         };
 
-        // Diamond scaling: usually 0.707 (1/sqrt(2)) relative to the axis to fit
-        // But Figma's matrix for diamond usually handles the scale.
-        // We map the stops to the primitive.
         p.fill.stops = gradient.stops;
         p.fill.opacity = opacity;
 
@@ -87,13 +84,7 @@ const decomposeGradient = (gradient: Gradient, layerW: number, layerH: number, o
 
     } else if (gradient.type === GradientType.Radial) {
         // --- RADIAL STRATEGY ---
-        // Map to a single Ellipse Primitive.
-        // The "Blur" is implicitly handled by the Radial Gradient of the primitive itself.
-        // For complex multi-stop radial gradients (iso-bands), we could split into multiple ellipses,
-        // but for standard Android XML, a single Radial Gradient Primitive with stops is most efficient
-        // and provides 100% fidelity if the Matrix is correct.
-
-        const p = createPrimitive('ellipse', 2, 2); // Unit circle (-1 to 1)
+        const p = createPrimitive('ellipse', LARGE_CANVAS, LARGE_CANVAS);
         p.transform = baseTransform;
         p.fill.stops = gradient.stops;
         p.fill.opacity = opacity;
@@ -102,29 +93,25 @@ const decomposeGradient = (gradient: Gradient, layerW: number, layerH: number, o
 
     } else if (gradient.type === GradientType.Angular) {
          // --- ANGULAR STRATEGY ---
-         // Angular is mapped to an Ellipse primitive but with a "Sweep" fill type.
-         // Note: If we strictly followed the "Primitives only have Radial/Linear" rule,
-         // we would decompose this into angular sectors (Rects/Ellipses).
-         // However, Android supports Sweep Gradient natively.
-         // To stay true to the "Intermediate Graph" concept, we label this as an Ellipse shape
-         // but we mark the fill type specifically.
+         // For Angular, we definitely want a Rect that fills the screen,
+         // but using an 'ellipse' primitive shape with Sweep gradient is safer for the Generator logic
+         // which expects circular/elliptical contexts for center alignment.
+         // Actually, to avoid corner clipping on a sweep, a Rectangle is safer than Ellipse
+         // if the aspect ratio is extreme.
+         // But let's stick to Ellipse for consistency, the LARGE_CANVAS handles the size.
 
-         const p = createPrimitive('ellipse', 2, 2);
+         const p = createPrimitive('ellipse', LARGE_CANVAS, LARGE_CANVAS);
          p.transform = baseTransform;
          p.fill.stops = gradient.stops;
          p.fill.opacity = opacity;
-         // Special marker (or we could add 'conic' to primitive fill types)
-         // For now, we pass stops and let the renderer decide based on GradientType which we attach
          (p as any).originalType = 'angular';
 
          primitives.push(p);
 
     } else {
         // --- LINEAR STRATEGY ---
-        // Linear is a Rect Primitive.
-        // Defined from -1 to 1 on X axis.
-
-        const p = createPrimitive('rect', 2, 2);
+        // Linear needs to extend infinitely sideways relative to the gradient vector.
+        const p = createPrimitive('rect', LARGE_CANVAS, LARGE_CANVAS);
         p.transform = baseTransform;
         p.fill.stops = gradient.stops;
         p.fill.opacity = opacity;
@@ -147,7 +134,7 @@ export const decomposeLayer = (layer: FigmaLayer): PrimitiveLayer[] => {
         if (!fill.visible) return;
 
         if (fill.type === 'solid') {
-            // Solid fill -> Full Size Rect Primitive
+            // Solid fill -> Full Size Rect Primitive (Actual Pixel Size)
             const p = createPrimitive('rect', layer.width, layer.height);
             p.transform = { x: layer.width/2, y: layer.height/2, rotation: 0, scaleX: 1, scaleY: 1 };
             p.fill.type = 'solid';
@@ -161,9 +148,6 @@ export const decomposeLayer = (layer: FigmaLayer): PrimitiveLayer[] => {
             allPrimitives = allPrimitives.concat(grads);
         }
     });
-
-    // 2. Optimization Step (Simple merge for now)
-    // In a real pipeline, we would merge overlapping layers with same color/transform
 
     return allPrimitives;
 };

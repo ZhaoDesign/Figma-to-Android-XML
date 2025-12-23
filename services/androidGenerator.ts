@@ -62,6 +62,10 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
     xml += `    android:width="${w}dp" android:height="${h}dp"\n`;
     xml += `    android:viewportWidth="${w}" android:viewportHeight="${h}">\n\n`;
 
+    // Global Clipping Path: Essential to clip the overflow of our huge gradient primitives
+    const mainClip = getRoundedRectPath(w, h, layer.corners);
+    xml += `    <clip-path android:pathData="${mainClip}" />\n\n`;
+
     // 2. Render Primitives
     // We treat every primitive as a standard Android Group Transform operation
 
@@ -74,20 +78,19 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
         xml += `            <group android:scaleX="${p.transform.scaleX.toFixed(4)}" android:scaleY="${p.transform.scaleY.toFixed(4)}">\n`;
 
         // Shape Geometry
-        // Note: Our primitives are defined in "Unit" space (-1 to 1) or normalized space.
-        // We draw a path covering that unit space.
-        // For Solid rects (backgrounds), we used pixel sizes in decomposer.
-        // For Gradients, we used 2x2 unit box.
+        // Use the primitive's actual size (which is now LARGE for gradients).
+        // Center the path at (0,0) so scaling works outwards.
+        const halfW = p.width / 2;
+        const halfH = p.height / 2;
 
-        const pathData = (p.shape === 'ellipse' || p.shape === 'rect')
-            ? `M-1,-1 H1 V1 H-1 Z` // Covers the transformed area
-            : `M0,0 H${p.width} V${p.height} H0 Z`; // Fallback
+        const pathData = (p.shape === 'ellipse')
+             // Approximate circle/ellipse path for the primitive container
+            ? `M-${halfW},0 A${halfW},${halfH} 0 1,1 ${halfW},0 A${halfW},${halfH} 0 1,1 -${halfW},0`
+            : `M-${halfW},-${halfH} H${halfW} V${halfH} H-${halfW} Z`;
 
         // Fill Logic
         if (p.fill.type === 'solid') {
-             // Use simple path for solids
-             const solidPath = `M-${p.width/2},-${p.height/2} H${p.width/2} V${p.height/2} H-${p.width/2} Z`;
-             xml += `                <path android:pathData="${solidPath}"\n`;
+             xml += `                <path android:pathData="${pathData}"\n`;
              xml += `                      android:fillColor="${toAndroidHex(p.fill.color, p.fill.opacity)}" />\n`;
         } else {
              // Gradient Primitive
@@ -97,8 +100,14 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
              xml += `                    <aapt:attr name="android:fillColor">\n`;
 
              if (originalType === 'linear') {
-                 // Linear mapped to unit box -1 to 1
-                 // Standard linear is Left->Right
+                 // Linear: Map 0 to 1 relative to the 'unit' logic.
+                 // Since our canvas is large (-50 to 50), 0 to 1 is a tiny strip in the center?
+                 // NO. The Linear Gradient coordinates in Android are relative to the *Path Bounds*
+                 // ONLY IF we don't specify coords? No, default is 0,0 to 1,0 in Local Space?
+                 // Android Gradient coordinates are in Local Space.
+                 // We want the gradient to span 0 to 1 in the "Unit Space" defined by the matrix.
+                 // The Matrix scales 1 Unit to N Pixels.
+                 // So we want the gradient vector to be length 1.
                  xml += `                        <gradient android:type="linear"\n`;
                  xml += `                                  android:startX="0" android:startY="0"\n`;
                  xml += `                                  android:endX="1" android:endY="0">\n`;
@@ -106,7 +115,8 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                  xml += `                        <gradient android:type="sweep"\n`;
                  xml += `                                  android:centerX="0" android:centerY="0">\n`;
              } else {
-                 // Radial (Default for Ellipse/Diamond primitives)
+                 // Radial (Default)
+                 // Radius 1. Matches the logic that "1 Unit" is the gradient extent.
                  xml += `                        <gradient android:type="radial"\n`;
                  xml += `                                  android:centerX="0" android:centerY="0"\n`;
                  xml += `                                  android:gradientRadius="1">\n`;
