@@ -58,42 +58,65 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
       const centerY_px = (g.center?.y ?? 50) * data.height / 100;
       const rotation = g.angle || 0;
 
-      // --- Radial, Diamond (Mapped to Radial), and Angular ---
-      // We process Angular here too because we want to use the same "Background Fill + Transform" logic
-      // to match Android XML output structure.
       const isRadialLike = g.type === GradientType.Radial || g.type === GradientType.Diamond;
       const isAngular = g.type === GradientType.Angular;
 
       if (isRadialLike || isAngular) {
 
         let rX_px = data.width / 2;
-        let scaleY = 1;
+        let rY_px = data.height / 2;
 
         if (g.size) {
             rX_px = (g.size.x / 100) * data.width;
-            const rY_px = (g.size.y / 100) * data.height;
-            if (rX_px > 0) {
-                scaleY = rY_px / rX_px;
-            }
+            rY_px = (g.size.y / 100) * data.height;
         }
 
-        const extendSize = Math.max(data.width, data.height) * 4;
+        // Avoid infinite divs. Clamp the drawing size to something reasonable relative to the shape.
+        // If it's rotated, we need it larger to cover corners, but not infinite.
+        const extendSize = Math.max(data.width, data.height) * 2.5;
 
         // CSS Gradients
         let background = '';
         if (isAngular) {
            // Conic gradient for angular
            // Note: CSS conic-gradient starts at 12 o'clock (0deg).
-           // If our rotation handles it, fine.
-           // `conic-gradient(from 0deg ...)`
+           // If we parsed it correctly, rotation handles it.
            background = `conic-gradient(from 0deg at 50% 50%, ${stopsStr})`;
         } else {
            // Radial (and Diamond fallback)
-           background = `radial-gradient(circle ${rX_px.toFixed(2)}px at center, ${stopsStr})`;
+           // Use explicit ellipse size
+           background = `radial-gradient(ellipse ${rX_px.toFixed(2)}px ${rY_px.toFixed(2)}px at center, ${stopsStr})`;
         }
 
-        // Get the last color for the background fill
         const lastColor = sortedStops.length > 0 ? sortedStops[sortedStops.length - 1].color : 'transparent';
+
+        // For Scale Transform on the DIV:
+        // We constructed the radial-gradient with explicit rX/rY.
+        // So we don't need to scale the DIV Y-axis anymore, we just need to rotate it.
+        // Wait, if we use ellipse rX rY in CSS, rotation of the ellipse itself is NOT supported in CSS radial-gradient syntax.
+        // So we MUST draw a circular gradient and scale the DIV, OR draw an elliptical gradient and rotate the DIV.
+        // If we rotate the DIV, the bounding box of the DIV must be large enough.
+
+        // Strategy:
+        // 1. Draw generic radial gradient (circle) or elliptical.
+        // 2. Apply Transform to the DIV to handle rotation and skew.
+
+        // If we use `radial-gradient(ellipse X Y ...)` we cannot rotate the ellipse inside the div.
+        // So we must rotate the div.
+
+        // Revised Strategy for exact visual match:
+        // Draw `radial-gradient(ellipse 50% 50% ...)` on a div sized exactly to 2*rX and 2*rY?
+        // No, keep the big div, use circle, and scale the div.
+        // Base Radius = rX.
+        // Scale Y = rY / rX.
+
+        const scaleY = rX_px > 0 ? rY_px / rX_px : 1;
+        const baseRadius = rX_px;
+
+        // Recalculate background for this strategy
+        if (!isAngular) {
+            background = `radial-gradient(circle ${baseRadius.toFixed(2)}px at center, ${stopsStr})`;
+        }
 
         return (
           <React.Fragment key={index}>
@@ -112,9 +135,7 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
               top: 0,
               width: extendSize,
               height: extendSize,
-              // Apply transforms: Translate to Center -> Rotate -> Scale
-              // Note: For conic/angular, scaling might distort the angle sweep, but that matches Android sweep gradient scaling behavior in our generator.
-              transform: `translate3d(${centerX_px}px, ${centerY_px}px, 0) translate3d(-50%, -50%, 0) rotate(${rotation}deg) scale(1, ${scaleY})`,
+              transform: `translate3d(${centerX_px}px, ${centerY_px}px, 0) translate3d(-50%, -50%, 0) rotate(${rotation}deg) scale(1, ${isAngular ? 1 : scaleY})`,
               transformOrigin: '50% 50%',
               opacity: fill.opacity ?? 1,
               mixBlendMode: (fill.blendMode || 'normal') as any,

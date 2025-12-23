@@ -109,7 +109,6 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
             const centerY = (g.center?.y ?? 50) * h / 100;
 
             // Shared Logic for Radial, Angular, and Diamond (mapped to Radial)
-            // They all benefit from the "Background Fill" + "Oversized Transformed Path" technique
             const isRadialLike = g.type === GradientType.Radial || g.type === GradientType.Diamond;
             const isAngular = g.type === GradientType.Angular;
 
@@ -117,8 +116,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 const sortedStops = [...g.stops].sort((a,b) => a.position - b.position);
                 const lastStop = sortedStops[sortedStops.length - 1];
 
-                // 1. Draw Background (Fill with last stop color)
-                // This prevents jagged edges at clamp boundaries
+                // 1. Background Fill (Simulate Clamp)
                 if (lastStop) {
                     xml += `    <!-- Background Fill (Last Color) -->\n`;
                     xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z"\n`;
@@ -126,24 +124,33 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 }
 
                 // 2. Draw Gradient on Top
+                // Extract sizes directly from the parser (which now returns correct X and Y axis lengths in %)
                 let radiusX = (w / 2);
                 let radiusY = (h / 2);
 
-                if (g.size && g.size.x !== 0) {
+                if (g.size) {
                     radiusX = (g.size.x / 100) * w;
                     radiusY = (g.size.y / 100) * h;
                 }
 
-                const baseRadius = radiusX;
-                const scaleY = radiusY / radiusX;
-                const rotation = g.angle || 0;
+                // Android Radial Gradient Logic:
+                // Base Radius = radiusX
+                // ScaleY = radiusY / radiusX
 
-                // Adjust rotation for Angular (Figma starts at 12 o'clock/90deg?, Android Sweep starts at 3 o'clock/0deg)
-                // Figma Angular often comes with a transform that handles this.
-                // If it's a standard CSS parse, `conic-gradient(from 90deg)` means start at 12.
-                // Android `sweep` starts at 3. So 90deg offset might be needed if not handled by matrix.
-                // However, `data-figma-gradient-fill` matrix usually handles it.
-                // For `Diamond`, we map to `radial` as Android has no Diamond support.
+                // Safety check for 0 radius
+                const baseRadius = radiusX > 0.1 ? radiusX : 0.1;
+                const scaleY = radiusY / baseRadius;
+
+                // Angle adjustment
+                // Android Sweep: 0deg is 3 o'clock. Figma/CSS Conic: 0deg is 12 o'clock.
+                // We typically need to rotate -90 to align Angular gradients.
+                // For Radial, the parser returns the major axis rotation.
+                let rotation = g.angle || 0;
+
+                if (isAngular) {
+                    // Angular usually needs a -90 offset in Android to match standard "Top Start"
+                    rotation -= 90;
+                }
 
                 xml += `    <group android:translateX="${centerX.toFixed(2)}" android:translateY="${centerY.toFixed(2)}">\n`;
                 xml += `        <group android:rotation="${rotation.toFixed(2)}">\n`;
