@@ -13,31 +13,47 @@ export interface ColorStop {
 }
 
 export interface GradientTransform {
-  a: number; // m00 (Scale X / Cos)
-  b: number; // m10 (Skew Y / Sin)
-  c: number; // m01 (Skew X / -Sin)
-  d: number; // m11 (Scale Y / Cos)
-  tx: number; // m02 (Translate X)
-  ty: number; // m12 (Translate Y)
-  // Derived helper values for convenience, though raw matrix is source of truth
+  a: number; b: number; c: number; d: number; tx: number; ty: number;
   rotation: number;
   scaleX: number;
   scaleY: number;
 }
 
+// --- The New Layer Graph Architecture ---
+
+export type PrimitiveShape = 'ellipse' | 'rect';
+
+export interface PrimitiveLayer {
+  id: string;
+  shape: PrimitiveShape;
+  // Standardized Geometry (0..1 space or pixel space, we use pixel space for easier Android mapping)
+  width: number;
+  height: number;
+  transform: {
+    x: number;
+    y: number;
+    rotation: number; // Degrees
+    scaleX: number;
+    scaleY: number;
+  };
+  // Visuals
+  fill: {
+    type: 'solid' | 'gradient'; // Even primitives might need a simple fade
+    color: string; // Main color
+    stops?: ColorStop[]; // If it's a gradient primitive
+    opacity: number;
+    blendMode: string;
+    blur: number; // The visual "spread" of this layer
+  };
+}
+
+// Legacy interfaces kept for Parsing input, but Output is now PrimitiveLayer[]
 export interface Gradient {
   type: GradientType;
   stops: ColorStop[];
-  // Legacy/Fallback fields
-  angle?: number;
-  center?: { x: number; y: number };
-  size?: { x: number; y: number };
-  handles?: {
-    start: { x: number; y: number };
-    end: { x: number; y: number };
-  };
-  // The Source of Truth for fidelity
   transform?: GradientTransform;
+  // Legacy fields
+  angle?: number; center?: {x:number, y:number}; size?: {x:number, y:number};
 }
 
 export interface Fill {
@@ -46,24 +62,15 @@ export interface Fill {
   opacity?: number;
   blendMode?: string;
   visible: boolean;
-  assetUrl?: string;
 }
 
 export interface Shadow {
   type: 'drop' | 'inner';
-  x: number;
-  y: number;
-  blur: number;
-  spread: number;
-  color: string;
-  visible: boolean;
+  x: number; y: number; blur: number; spread: number; color: string; visible: boolean;
 }
 
 export interface Corners {
-  topLeft: number;
-  topRight: number;
-  bottomRight: number;
-  bottomLeft: number;
+  topLeft: number; topRight: number; bottomRight: number; bottomLeft: number;
 }
 
 export interface FigmaLayer {
@@ -74,6 +81,4 @@ export interface FigmaLayer {
   corners: Corners | number;
   shadows: Shadow[];
   opacity: number;
-  blur?: number;
-  backdropBlur?: number;
 }
