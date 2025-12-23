@@ -56,11 +56,6 @@ const parseFigmaGradientFill = (jsonStr: string, width: number, height: number, 
     // Figma Transform Matrix
     // [ m00 m01 m02 ]
     // [ m10 m11 m12 ]
-    // These values transform a unit square (0,0)-(1,1) to the gradient space in pixels (absolute).
-    // m02, m12 are the translation (Center).
-    // m00, m10 is the X-axis vector (Radius X).
-    // m01, m11 is the Y-axis vector (Radius Y).
-
     const t = data.transform || {};
     const m00 = t.m00 || 1;
     const m01 = t.m01 || 0;
@@ -69,33 +64,52 @@ const parseFigmaGradientFill = (jsonStr: string, width: number, height: number, 
     const m11 = t.m11 || 1;
     const m12 = t.m12 || 0;
 
-    // 1. Calculate Local Center (Relative to the shape's bounding box)
+    // 1. Calculate Local Center
     const localCenterX = m02 - offsetX;
     const localCenterY = m12 - offsetY;
 
     // 2. Extract Vectors
-    // U = Vector X (Primary Radius)
     const Ux = m00;
     const Uy = m10;
-
-    // V = Vector Y (Secondary Radius)
     const Vx = m01;
     const Vy = m11;
 
-    // 3. Calculate Geometry
-    // Radius (Length of U)
-    const radiusPx = Math.sqrt(Ux * Ux + Uy * Uy);
+    let angleDeg = 0;
+    let radiusPx = 0;
+    let scaleRatio = 1;
 
-    // Angle (Direction of U)
-    const angleRad = Math.atan2(Uy, Ux);
-    const angleDeg = angleRad * 180 / Math.PI;
+    // --- Special Handling for Angular Gradients ---
+    // Figma stores angular gradients with the shape's aspect ratio scaling applied to the matrix.
+    // e.g. A button 300x50 will have a very flattened matrix.
+    // However, CSS `conic-gradient` and Android `sweep` are circular.
+    // To get the correct visual angle (e.g. 8deg) from the flattened vector (e.g. 45deg),
+    // we must un-scale the vector by the shape dimensions.
+    if (type === GradientType.Angular) {
+        // Normalize vectors by dimension to get "Unit Square" direction
+        // Avoid divide by zero
+        const w = width || 1;
+        const h = height || 1;
 
-    // Scale Y (Ratio of V length to U length)
-    // In Figma, a Diamond/Radial gradient has two axes.
-    // Android gradients define a circular radius, then ScaleY squeezes/stretches it.
-    const lengthV = Math.sqrt(Vx * Vx + Vy * Vy);
-    // If radiusPx is close to 0, default to 1 to avoid NaN
-    const scaleRatio = radiusPx > 0.001 ? lengthV / radiusPx : 1;
+        const normUx = Ux / w;
+        const normUy = Uy / h;
+
+        const angleRad = Math.atan2(normUy, normUx);
+        angleDeg = angleRad * 180 / Math.PI;
+
+        // For Angular, we force a circular aspect ratio for Android/CSS compatibility
+        // unless specific elliptical sweep is desired (rare/unsupported in native conic).
+        radiusPx = w / 2; // Arbitrary base radius
+        scaleRatio = 1;   // Force 1:1 circle
+    } else {
+        // Linear / Radial / Diamond
+        // Use raw pixels
+        radiusPx = Math.sqrt(Ux * Ux + Uy * Uy);
+        const angleRad = Math.atan2(Uy, Ux);
+        angleDeg = angleRad * 180 / Math.PI;
+
+        const lengthV = Math.sqrt(Vx * Vx + Vy * Vy);
+        scaleRatio = radiusPx > 0.001 ? lengthV / radiusPx : 1;
+    }
 
     // Convert to percentages for the app's internal format
     const cxPct = (localCenterX / width) * 100;
@@ -103,8 +117,7 @@ const parseFigmaGradientFill = (jsonStr: string, width: number, height: number, 
 
     // Size X% (Base Radius)
     const sxPct = (radiusPx / width) * 100;
-
-    // Size Y% (Actual Height of the ellipse = Radius * ScaleRatio)
+    // Size Y%
     const syPct = ((radiusPx * scaleRatio) / height) * 100;
 
     return {
@@ -112,7 +125,7 @@ const parseFigmaGradientFill = (jsonStr: string, width: number, height: number, 
       stops,
       angle: angleDeg,
       center: { x: cxPct, y: cyPct },
-      size: { x: sxPct, y: syPct }, // We store X and Y percentages directly now
+      size: { x: sxPct, y: syPct },
     };
 
   } catch (e) {
@@ -246,7 +259,6 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
       const opacityAttr = shape.getAttribute('fill-opacity') || shape.getAttribute('opacity') || '1';
 
       if (figmaGradientAttr) {
-          // IMPORTANT: Pass realX, realY to correct coordinate offset
           const grad = parseFigmaGradientFill(figmaGradientAttr, realW, realH, realX, realY);
           if (grad) {
               fills.push({
@@ -258,6 +270,7 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
           }
       }
 
+      // ... existing SVG fill parsing (url#...) ...
       if (fillAttr && fillAttr !== 'none') {
           if (fillAttr.startsWith('url(')) {
               const id = fillAttr.replace(/url\(#([^)]+)\)/, '$1');
@@ -279,7 +292,6 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
                       });
                   });
 
-                  // Parse SVG native transform (translate, rotate, scale)
                   const transformAttr = gradientEl.getAttribute('gradientTransform');
                   let angle = 0;
                   let center = { x: 50, y: 50 };
@@ -311,25 +323,9 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
                   }
 
                   if (transformAttr) {
-                      // Custom SVG matrix logic similar to parseFigmaGradientFill
-                      // We need to map SVG matrix (a,b,c,d,e,f) to our Angle/Size/Scale logic
-                      // Matrix M = [a c e]
-                      //            [b d f]
-                      // This transforms the unit circle (r=1) if units are objectBoundingBox?
-                      // Or if userSpaceOnUse, it transforms the gradient space.
-                      // For now, let's trust a simpler decomposition for SVG Native as it's usually cleaner
-                      // but we MUST subtract offset for translation.
-
                       const rawMatrix = parseSvgTransformRaw(transformAttr);
-                      // rawMatrix.e, rawMatrix.f is translation.
                       const localTx = rawMatrix.e - realX;
                       const localTy = rawMatrix.f - realY;
-
-                      // Calculate Vectors
-                      // U = (a, b), V = (c, d)
-                      // If gradientUnits="userSpaceOnUse" and r="1", then U is radius X, V is radius Y (roughly)
-                      // If scale(48, 199) is used, U=(48,0), V=(0,199) (before rotation)
-
                       const Ux = rawMatrix.a;
                       const Uy = rawMatrix.b;
                       const Vx = rawMatrix.c;
@@ -339,13 +335,7 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
                       const lenV = Math.sqrt(Vx*Vx + Vy*Vy);
                       const ang = Math.atan2(Uy, Ux) * 180 / Math.PI;
 
-                      // Note: SVG scale(sx, sy) applies sx to X and sy to Y.
-                      // If we have rotate(-90), X becomes Y.
-                      // So we use vector lengths to determine "radius" and "scale ratio".
-
                       center = { x: (localTx / realW) * 100, y: (localTy / realH) * 100 };
-
-                      // Use pixel sizes converted to %
                       size = { x: (rX / realW) * 100, y: (lenV / realH) * 100 };
                       angle = ang;
                   }
@@ -370,13 +360,11 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
   return { name: 'Figma Shape', width: realW, height: realH, corners, fills, shadows, opacity: 1 };
 };
 
-// Helper for raw matrix extraction
+// ... keep helpers and parseClipboardData ...
 const parseSvgTransformRaw = (transformStr: string) => {
     let m = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
     const regex = /(matrix|translate|scale|rotate|skewX|skewY)\s*\(([^)]+)\)/g;
     let match;
-
-    // Simple matrix multiplication helper
     const mul = (m1: any, m2: any) => ({
         a: m1.a * m2.a + m1.c * m2.b,
         b: m1.b * m2.a + m1.d * m2.b,
@@ -385,12 +373,10 @@ const parseSvgTransformRaw = (transformStr: string) => {
         e: m1.a * m2.e + m1.c * m2.f + m1.e,
         f: m1.b * m2.e + m1.d * m2.f + m1.f
     });
-
     while ((match = regex.exec(transformStr)) !== null) {
         const command = match[1];
         const args = match[2].split(/[\s,]+/).filter(s => s.trim() !== '').map(parseFloat);
         let nextM = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
-
         switch (command) {
             case 'matrix': nextM = { a: args[0], b: args[1], c: args[2], d: args[3], e: args[4], f: args[5] }; break;
             case 'translate': nextM.e = args[0] || 0; nextM.f = args[1] || 0; break;
@@ -399,8 +385,6 @@ const parseSvgTransformRaw = (transformStr: string) => {
                 const rad = (args[0] || 0) * Math.PI / 180;
                 const c = Math.cos(rad); const s = Math.sin(rad);
                 nextM.a = c; nextM.b = s; nextM.c = -s; nextM.d = c;
-                // Rotate about center? SVG default is about origin.
-                if (args.length > 1) { /* complex rotation about point not implemented for simplicity, usually not in Figma exports */ }
                 break;
         }
         m = mul(m, nextM);
@@ -408,7 +392,6 @@ const parseSvgTransformRaw = (transformStr: string) => {
     return m;
 };
 
-// ... keep existing parseClipboardData and parseCSS ...
 export const parseClipboardData = (text: string): FigmaLayer | null => {
   if (text.trim().startsWith('<svg') || text.includes('xmlns="http://www.w3.org/2000/svg"')) {
       try {

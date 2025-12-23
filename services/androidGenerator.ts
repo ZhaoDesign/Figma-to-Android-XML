@@ -108,7 +108,6 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
             const centerX = (g.center?.x ?? 50) * w / 100;
             const centerY = (g.center?.y ?? 50) * h / 100;
 
-            // Shared Logic for Radial, Angular, and Diamond (mapped to Radial)
             const isRadialLike = g.type === GradientType.Radial || g.type === GradientType.Diamond;
             const isAngular = g.type === GradientType.Angular;
 
@@ -124,7 +123,6 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 }
 
                 // 2. Draw Gradient on Top
-                // Extract sizes directly from the parser (which now returns correct X and Y axis lengths in %)
                 let radiusX = (w / 2);
                 let radiusY = (h / 2);
 
@@ -133,24 +131,16 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                     radiusY = (g.size.y / 100) * h;
                 }
 
-                // Android Radial Gradient Logic:
-                // Base Radius = radiusX
-                // ScaleY = radiusY / radiusX
-
-                // Safety check for 0 radius
                 const baseRadius = radiusX > 0.1 ? radiusX : 0.1;
-                const scaleY = radiusY / baseRadius;
+                // For Angular gradients, we force 1:1 ratio (circular sweep) to avoid distortion
+                const scaleY = isAngular ? 1 : (radiusY / baseRadius);
 
-                // Angle adjustment
-                // Android Sweep: 0deg is 3 o'clock. Figma/CSS Conic: 0deg is 12 o'clock.
-                // We typically need to rotate -90 to align Angular gradients.
-                // For Radial, the parser returns the major axis rotation.
                 let rotation = g.angle || 0;
 
-                if (isAngular) {
-                    // Angular usually needs a -90 offset in Android to match standard "Top Start"
-                    rotation -= 90;
-                }
+                // Note: For Angular, the parser now returns the "unscaled" visual angle.
+                // Android 0 is East. Figma "Top" corresponds to -90.
+                // If parsed angle is e.g. -81 (North-ish), we use it directly.
+                // We no longer subtract 90 because the parser already handles vector orientation.
 
                 xml += `    <group android:translateX="${centerX.toFixed(2)}" android:translateY="${centerY.toFixed(2)}">\n`;
                 xml += `        <group android:rotation="${rotation.toFixed(2)}">\n`;
@@ -165,7 +155,6 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                     xml += `                        <gradient android:type="sweep"\n`;
                     xml += `                                  android:centerX="0" android:centerY="0">\n`;
                 } else {
-                    // Radial (and Diamond fallback)
                     xml += `                        <gradient android:type="radial"\n`;
                     xml += `                                  android:centerX="0" android:centerY="0"\n`;
                     xml += `                                  android:gradientRadius="${baseRadius.toFixed(2)}">\n`;
