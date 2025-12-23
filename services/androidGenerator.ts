@@ -68,7 +68,8 @@ const getRoundedRectPath = (w: number, h: number, corners: Corners | number, ins
 export const generateAndroidXML = (layer: FigmaLayer): string => {
     const w = Math.round(layer.width);
     const h = Math.round(layer.height);
-    
+    const mainPath = getRoundedRectPath(w, h, layer.corners);
+
     let xml = `<?xml version="1.0" encoding="utf-8"?>\n`;
     xml += `<!-- Generated from Figma Advanced (Matrix Mode) -->\n`;
     xml += `<vector xmlns:android="http://schemas.android.com/apk/res/android"\n`;
@@ -87,9 +88,6 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
     });
 
     // Global Clipping Path
-    // We use a Clip Path to mask the entire button shape.
-    // This allows us to draw large gradients behind it that are clipped to the button's bounds.
-    const mainPath = getRoundedRectPath(w, h, layer.corners);
     xml += `    <clip-path android:pathData="${mainPath}" />\n\n`;
 
     // Fills
@@ -110,8 +108,19 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
 
             if (g.type === GradientType.Radial) {
                 // --- RADIAL GRADIENT LOGIC ---
-                // Figma Export: Translate -> Rotate -> Scale
+                // Feature request: Fill the background with the outermost color
+                const sortedStops = [...g.stops].sort((a,b) => a.position - b.position);
+                const lastStop = sortedStops[sortedStops.length - 1];
 
+                // 1. Draw the Background Layer (The "Button" body)
+                // This simulates "Subtracting" the ellipse by filling the whole thing first
+                if (lastStop) {
+                    xml += `    <!-- Radial Background (Fill with last stop color) -->\n`;
+                    xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z"\n`;
+                    xml += `          android:fillColor="${toAndroidHex(lastStop.color)}" />\n`;
+                }
+
+                // 2. Draw the Gradient Layer on top
                 let radiusX = (w / 2);
                 let radiusY = (h / 2);
 
@@ -120,9 +129,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                     radiusY = (g.size.y / 100) * h;
                 }
 
-                // Base radius for the gradient definition
                 const baseRadius = radiusX;
-                // Scale factor to squash the circle into an ellipse
                 const scaleY = radiusY / radiusX;
                 const rotation = g.angle || 0;
 
@@ -130,10 +137,8 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 xml += `        <group android:rotation="${rotation.toFixed(2)}">\n`;
                 xml += `            <group android:scaleY="${scaleY.toFixed(6)}">\n`;
 
-                // IMPORTANT: make the drawing path HUGE to cover the entire button area.
-                // Android gradients default to "clamp" mode, so pixels outside the gradientRadius
-                // will be filled with the last color stop.
-                // We use Math.max(w, h) * 4 to ensure it covers everything even after rotation/scale.
+                // For the gradient itself, we still use a large path to ensure smooth clamping
+                // if the ellipse touches the edges, but visually the background layer handles the main fill.
                 const drawSize = Math.max(w, h) * 4;
 
                 xml += `                <path android:pathData="M${(-drawSize).toFixed(1)},${(-drawSize).toFixed(1)} h${(drawSize * 2).toFixed(1)} v${(drawSize * 2).toFixed(1)} h-${(drawSize * 2).toFixed(1)} z">\n`;
@@ -141,7 +146,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 xml += `                        <gradient android:type="radial"\n`;
                 xml += `                                  android:centerX="0" android:centerY="0"\n`;
                 xml += `                                  android:gradientRadius="${baseRadius.toFixed(2)}">\n`;
-                g.stops.sort((a,b) => a.position - b.position).forEach(stop => {
+                sortedStops.forEach(stop => {
                     xml += `                            <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
                 });
                 xml += `                        </gradient>\n`;
