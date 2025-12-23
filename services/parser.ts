@@ -88,89 +88,68 @@ const parseSvgTransform = (transformStr: string): TransformData => {
     m = multiplyMatrices(m, nextM);
   }
 
+  // Decompose Matrix
+  // Assume matrix is TRS (Translate * Rotate * Scale)
+  // [ sx*cos  -sy*sin  tx ]
+  // [ sx*sin   sy*cos  ty ]
+  // Note: This decomposition assumes no Skew and that Scale is applied before Rotate in standard linear algebra,
+  // but SVG transform list order is application order.
+
   const scaleX = Math.sqrt(m.a * m.a + m.b * m.b);
   const scaleY = Math.sqrt(m.c * m.c + m.d * m.d);
+
   const rotationRad = Math.atan2(m.b, m.a);
   let rotationDeg = rotationRad * 180 / Math.PI;
 
   return { rotation: rotationDeg, scaleX, scaleY, translateX: m.e, translateY: m.f };
 };
 
-// Calculate Bounding Box from SVG Path Data (Approximation)
 const getPathBoundingBox = (d: string) => {
-    // This is a simple parser that extracts coordinates.
-    // It assumes Figma's clean export format (Absolute Uppercase commands).
-
-    // Commands: M x y, L x y, H x, V y, C x1 y1 x2 y2 x y, etc.
     const tokens = d.match(/([a-zA-Z])|([-+]?[\d.]+(?:e[-+]?\d+)?)/gi) || [];
-
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-
     let i = 0;
     while(i < tokens.length) {
         const token = tokens[i];
         if (/[a-zA-Z]/.test(token)) {
             const cmd = token.toUpperCase();
             i++;
-
             switch(cmd) {
-                case 'M':
-                case 'L':
-                case 'T': // x y
+                case 'M': case 'L': case 'T':
                     while(i < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
-                        const x = parseFloat(tokens[i++]);
-                        const y = parseFloat(tokens[i++]);
-                        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
-                        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+                        const x = parseFloat(tokens[i++]); const y = parseFloat(tokens[i++]);
+                        minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
                     }
                     break;
-                case 'H': // x
+                case 'H':
                     while(i < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
-                        const x = parseFloat(tokens[i++]);
-                        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+                        const x = parseFloat(tokens[i++]); minX = Math.min(minX, x); maxX = Math.max(maxX, x);
                     }
                     break;
-                case 'V': // y
+                case 'V':
                     while(i < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
-                        const y = parseFloat(tokens[i++]);
-                        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+                        const y = parseFloat(tokens[i++]); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
                     }
                     break;
-                case 'C': // x1 y1 x2 y2 x y
+                case 'C':
                     while(i < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
-                        i+=4; // skip control points (rough bbox)
-                        const x = parseFloat(tokens[i++]);
-                        const y = parseFloat(tokens[i++]);
-                        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
-                        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+                        i+=4; const x = parseFloat(tokens[i++]); const y = parseFloat(tokens[i++]);
+                        minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
                     }
                     break;
-                case 'Q': // x1 y1 x y
-                case 'S':
+                case 'Q': case 'S':
                     while(i < tokens.length && !/[a-zA-Z]/.test(tokens[i])) {
-                        i+=2; // skip control points
-                        const x = parseFloat(tokens[i++]);
-                        const y = parseFloat(tokens[i++]);
-                        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
-                        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+                        i+=2; const x = parseFloat(tokens[i++]); const y = parseFloat(tokens[i++]);
+                        minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
                     }
-                    break;
-                case 'Z':
                     break;
                 default:
-                    // Unknown command, skip till next alpha
                     while(i < tokens.length && !/[a-zA-Z]/.test(tokens[i])) i++;
             }
-        } else {
-             i++;
-        }
+        } else { i++; }
     }
-
     if (minX === Infinity) return null;
     return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 };
-
-// --- SVG Parsing Logic ---
 
 const parseSVG = (svgText: string): FigmaLayer | null => {
   const parser = new DOMParser();
@@ -178,17 +157,14 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
   const svg = doc.querySelector('svg');
   if (!svg) return null;
 
-  // 1. Identify the main shape
-  // Figma usually puts the shape in a path or rect.
-  const path = doc.querySelector('path');
-  const rect = doc.querySelector('rect');
-  const mainEl = path || rect;
+  // 1. Identify all shape elements (path, rect)
+  const shapes = Array.from(doc.querySelectorAll('path, rect'));
+  if (shapes.length === 0) return null;
 
-  if (!mainEl) return null; // No shape found
-
+  // 2. Determine Dimensions & Bounding Box (Using the first valid shape or ViewBox)
   let realX = 0, realY = 0, realW = 0, realH = 0;
 
-  // 2. Determine Dimensions (Smart Crop)
+  const mainEl = shapes[0];
   if (mainEl.tagName === 'rect') {
       realX = parseFloat(mainEl.getAttribute('x') || '0');
       realY = parseFloat(mainEl.getAttribute('y') || '0');
@@ -198,12 +174,8 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
       const d = mainEl.getAttribute('d') || '';
       const bbox = getPathBoundingBox(d);
       if (bbox) {
-          realX = bbox.x;
-          realY = bbox.y;
-          realW = bbox.width;
-          realH = bbox.height;
+          realX = bbox.x; realY = bbox.y; realW = bbox.width; realH = bbox.height;
       } else {
-          // Fallback to ViewBox
           const viewBox = svg.getAttribute('viewBox')?.split(/[\s,]+/).map(parseFloat);
           if (viewBox && viewBox.length === 4) {
               realW = viewBox[2]; realH = viewBox[3];
@@ -211,23 +183,19 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
       }
   }
 
-  // Fallback defaults
   if (realW === 0) realW = 100;
   if (realH === 0) realH = 100;
 
   // 3. Corners
   let corners: Corners | number = 0;
-  if (rect) {
-      corners = parseFloat(rect.getAttribute('rx') || '0');
+  if (mainEl.tagName === 'rect') {
+      corners = parseFloat(mainEl.getAttribute('rx') || '0');
   } else {
-      // Heuristic: if path is likely a pill (C commands present), set corners to height/2
-      const d = path?.getAttribute('d') || '';
-      if (d.includes('C')) {
-          corners = realH / 2; // Auto-guess Pill shape
-      }
+      const d = mainEl.getAttribute('d') || '';
+      if (d.includes('C')) corners = realH / 2;
   }
 
-  // 4. Shadows (Filter Parsing)
+  // 4. Shadows
   const shadows: Shadow[] = [];
   const filterAttr = mainEl.getAttribute('filter') || svg.querySelector('g')?.getAttribute('filter');
   if (filterAttr) {
@@ -237,110 +205,120 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
           const feOffset = filterEl.querySelector('feOffset');
           const feBlur = filterEl.querySelector('feGaussianBlur');
           const feColor = filterEl.querySelector('feColorMatrix');
-
           const dx = parseFloat(feOffset?.getAttribute('dx') || '0');
           const dy = parseFloat(feOffset?.getAttribute('dy') || '0');
           const stdDev = parseFloat(feBlur?.getAttribute('stdDeviation') || '0');
-
-          let alpha = 0.2; // Default shadow alpha
+          let alpha = 0.2;
           const values = feColor?.getAttribute('values');
           if (values) {
               const parts = values.split(/[\s,]+/);
-              if (parts.length >= 19) {
-                  // Standard matrix for alpha tint: 0 0 0 0 R, 0 0 0 0 G, 0 0 0 0 B, 0 0 0 A 0
-                  alpha = parseFloat(parts[18]);
-              }
+              if (parts.length >= 19) alpha = parseFloat(parts[18]);
           }
-
           if (stdDev > 0 || dx !== 0 || dy !== 0) {
-              shadows.push({
-                  type: 'drop',
-                  x: dx,
-                  y: dy,
-                  blur: stdDev * 2, // SVG stdDev is approx half CSS blur
-                  spread: 0,
-                  color: `rgba(0,0,0,${alpha})`,
-                  visible: true
-              });
+              shadows.push({ type: 'drop', x: dx, y: dy, blur: stdDev * 2, spread: 0, color: `rgba(0,0,0,${alpha})`, visible: true });
           }
       }
   }
 
-  // 5. Fills & Gradients
+  // 5. Fills - Iterate over ALL shapes if they are stacked
   const fills: Fill[] = [];
   const defs = doc.querySelector('defs');
 
-  const fillAttr = mainEl.getAttribute('fill');
-  const opacityAttr = mainEl.getAttribute('fill-opacity') || mainEl.getAttribute('opacity') || '1';
+  shapes.forEach(shape => {
+      // Basic check: only include shapes that match the main dimensions (simple layer stacking)
+      // This avoids parsing random icons as fills.
+      // For now, we trust Figma's "Copy as SVG" which typically outputs exactly the selected layer's fills as paths.
 
-  if (fillAttr && fillAttr !== 'none') {
-      if (fillAttr.startsWith('url(')) {
-          const id = fillAttr.replace(/url\(#([^)]+)\)/, '$1');
-          const gradientEl = defs?.querySelector(`#${id}`);
-          if (gradientEl) {
-               const type = gradientEl.tagName === 'radialGradient' ? GradientType.Radial : GradientType.Linear;
-               const stops: ColorStop[] = [];
-               Array.from(gradientEl.querySelectorAll('stop')).forEach(stop => {
-                  const color = stop.getAttribute('stop-color') || '#000000';
-                  const offsetStr = stop.getAttribute('offset') || '0';
-                  let offset = parseFloat(offsetStr);
-                  if (offsetStr.includes('%')) offset /= 100;
-                  stops.push({ color, position: offset * 100 });
-              });
+      const fillAttr = shape.getAttribute('fill');
+      const opacityAttr = shape.getAttribute('fill-opacity') || shape.getAttribute('opacity') || '1';
 
-              // Transform Processing
-              const transformAttr = gradientEl.getAttribute('gradientTransform');
-              let angle = 0;
-              let center = { x: 50, y: 50 };
-              let size = { x: 50, y: 50 };
+      if (fillAttr && fillAttr !== 'none') {
+          if (fillAttr.startsWith('url(')) {
+              const id = fillAttr.replace(/url\(#([^)]+)\)/, '$1');
+              const gradientEl = defs?.querySelector(`#${id}`);
 
-              if (transformAttr) {
-                  const t = parseSvgTransform(transformAttr);
-                  angle = t.rotation;
+              if (gradientEl) {
+                   const type = gradientEl.tagName === 'radialGradient' ? GradientType.Radial : GradientType.Linear;
+                   const stops: ColorStop[] = [];
+                   Array.from(gradientEl.querySelectorAll('stop')).forEach(stop => {
+                      const color = stop.getAttribute('stop-color') || '#000000';
+                      const stopOpacity = stop.getAttribute('stop-opacity');
+                      const offsetStr = stop.getAttribute('offset') || '0';
+                      let offset = parseFloat(offsetStr);
+                      if (offsetStr.includes('%')) offset /= 100;
 
-                  // CRITICAL: Normalize Translate relative to the Shape Bounding Box
-                  // SVG Gradient Transform is in Global ViewBox coords.
-                  // We need it in Shape coords (0..width, 0..height).
-                  const localTx = t.translateX - realX;
-                  const localTy = t.translateY - realY;
+                      stops.push({
+                          color,
+                          position: offset * 100,
+                          opacity: stopOpacity ? parseFloat(stopOpacity) : undefined
+                      });
+                  });
 
-                  center = {
-                      x: (localTx / realW) * 100,
-                      y: (localTy / realH) * 100
-                  };
+                  // Transform Processing
+                  const transformAttr = gradientEl.getAttribute('gradientTransform');
+                  let angle = 0;
+                  let center = { x: 50, y: 50 };
+                  let size = { x: 50, y: 50 };
+                  let handles = undefined;
 
-                  // Scale is absolute pixels, convert to percentage of shape size
-                  size = {
-                      x: (t.scaleX / realW) * 100,
-                      y: (t.scaleY / realH) * 100
-                  };
+                  if (type === GradientType.Linear) {
+                      const x1 = gradientEl.getAttribute('x1');
+                      const y1 = gradientEl.getAttribute('y1');
+                      const x2 = gradientEl.getAttribute('x2');
+                      const y2 = gradientEl.getAttribute('y2');
+
+                      if (x1 !== null && y1 !== null && x2 !== null && y2 !== null) {
+                          // Handle UserSpaceOnUse or ObjectBoundingBox
+                          // For now assuming these are absolute if userSpaceOnUse, or need conversion
+                          const units = gradientEl.getAttribute('gradientUnits');
+                          let sx = parseFloat(x1), sy = parseFloat(y1), ex = parseFloat(x2), ey = parseFloat(y2);
+
+                          if (units !== 'userSpaceOnUse') {
+                              // Convert % to pixels if needed, or assume 0-1
+                              if (x1.includes('%')) sx = parseFloat(x1) / 100 * realW;
+                              if (y1.includes('%')) sy = parseFloat(y1) / 100 * realH;
+                              if (x2.includes('%')) ex = parseFloat(x2) / 100 * realW;
+                              if (y2.includes('%')) ey = parseFloat(y2) / 100 * realH;
+                          }
+
+                          // Offset by the shape's position to make them local to the drawable (0,0)
+                          // If UserSpaceOnUse, coordinates are global.
+                          if (units === 'userSpaceOnUse') {
+                              sx -= realX; sy -= realY;
+                              ex -= realX; ey -= realY;
+                          }
+
+                          handles = { start: { x: sx, y: sy }, end: { x: ex, y: ey } };
+                      }
+                  }
+
+                  if (transformAttr) {
+                      const t = parseSvgTransform(transformAttr);
+                      angle = t.rotation;
+                      const localTx = t.translateX - realX;
+                      const localTy = t.translateY - realY;
+                      center = { x: (localTx / realW) * 100, y: (localTy / realH) * 100 };
+                      size = { x: (t.scaleX / realW) * 100, y: (t.scaleY / realH) * 100 };
+                  }
+
+                  fills.push({
+                      type: 'gradient',
+                      visible: true,
+                      value: { type, stops, angle, center, size, handles }
+                  });
               }
-
+          } else {
               fills.push({
-                  type: 'gradient',
+                  type: 'solid',
+                  value: fillAttr,
                   visible: true,
-                  value: { type, stops, angle, center, size }
+                  opacity: parseFloat(opacityAttr)
               });
           }
-      } else {
-          fills.push({
-              type: 'solid',
-              value: fillAttr,
-              visible: true,
-              opacity: parseFloat(opacityAttr)
-          });
       }
-  }
+  });
 
-  return {
-      name: 'Figma Shape',
-      width: realW,
-      height: realH,
-      corners,
-      fills,
-      shadows,
-      opacity: 1
-  };
+  return { name: 'Figma Shape', width: realW, height: realH, corners, fills, shadows, opacity: 1 };
 };
 
 export const parseClipboardData = (text: string): FigmaLayer | null => {

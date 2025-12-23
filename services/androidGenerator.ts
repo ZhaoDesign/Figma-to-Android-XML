@@ -1,7 +1,7 @@
 
 import { FigmaLayer, Fill, Gradient, GradientType, Corners, Shadow } from '../types';
 
-const toAndroidHex = (cssColor: string): string => {
+const toAndroidHex = (cssColor: string, overrideOpacity?: number): string => {
   const getRgba = (c: string) => {
     if (c.startsWith('#')) {
         let r, g, b, a = 1;
@@ -20,7 +20,7 @@ const toAndroidHex = (cssColor: string): string => {
     const ctx = document.createElement('canvas').getContext('2d');
     if (!ctx) return {r:0,g:0,b:0,a:1};
     ctx.fillStyle = c;
-    const computed = ctx.fillStyle; 
+    const computed = ctx.fillStyle;
     if (computed.startsWith('#')) {
         const r = parseInt(computed.slice(1,3), 16);
         const g = parseInt(computed.slice(3,5), 16);
@@ -35,8 +35,10 @@ const toAndroidHex = (cssColor: string): string => {
   };
 
   const current = getRgba(cssColor);
+  const finalAlpha = overrideOpacity !== undefined ? overrideOpacity : current.a;
+
   const toHex = (num: number) => Math.round(num).toString(16).padStart(2, '0').toUpperCase();
-  return `#${toHex(current.a * 255)}${toHex(current.r)}${toHex(current.g)}${toHex(current.b)}`;
+  return `#${toHex(finalAlpha * 255)}${toHex(current.r)}${toHex(current.g)}${toHex(current.b)}`;
 };
 
 const getRoundedRectPath = (w: number, h: number, corners: Corners | number, inset: number = 0): string => {
@@ -90,8 +92,15 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
     // Global Clipping Path
     xml += `    <clip-path android:pathData="${mainPath}" />\n\n`;
 
-    // Fills
-    [...layer.fills].reverse().forEach((fill, idx) => {
+    // Fills (Figma stack order: Bottom is first in array? No, usually Top is first.
+    // Parser iterates array. SVG order: Bottom is first.
+    // parser.ts fills push order: iterates shapes. SVG first shape is bottom.
+    // So fills[0] is bottom.
+    // Android draws in order (Painter's algorithm), so we want bottom first.
+    // layer.fills comes from parser in order of SVG (Bottom -> Top).
+    // So we iterate regularly.
+
+    layer.fills.forEach((fill, idx) => {
         if (!fill.visible) return;
 
         xml += `    <!-- Fill ${idx + 1}: ${fill.type.toUpperCase()} -->\n`;
@@ -112,15 +121,18 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 const sortedStops = [...g.stops].sort((a,b) => a.position - b.position);
                 const lastStop = sortedStops[sortedStops.length - 1];
 
-                // 1. Draw the Background Layer (The "Button" body)
-                // This simulates "Subtracting" the ellipse by filling the whole thing first
+                // Only fill background if the last stop is NOT transparent
+                // Check hex alpha. If it is < 1 or undefined, we might not want to fill?
+                // Actually, if we want to "extend" the gradient, we should fill with the exact last color.
+                // If last color is transparent, we fill with transparent, which is fine (invisible).
+
                 if (lastStop) {
                     xml += `    <!-- Radial Background (Fill with last stop color) -->\n`;
                     xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z"\n`;
-                    xml += `          android:fillColor="${toAndroidHex(lastStop.color)}" />\n`;
+                    xml += `          android:fillColor="${toAndroidHex(lastStop.color, lastStop.opacity)}" />\n`;
                 }
 
-                // 2. Draw the Gradient Layer on top
+                // Draw the Gradient Layer on top
                 let radiusX = (w / 2);
                 let radiusY = (h / 2);
 
@@ -137,8 +149,6 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 xml += `        <group android:rotation="${rotation.toFixed(2)}">\n`;
                 xml += `            <group android:scaleY="${scaleY.toFixed(6)}">\n`;
 
-                // For the gradient itself, we still use a large path to ensure smooth clamping
-                // if the ellipse touches the edges, but visually the background layer handles the main fill.
                 const drawSize = Math.max(w, h) * 4;
 
                 xml += `                <path android:pathData="M${(-drawSize).toFixed(1)},${(-drawSize).toFixed(1)} h${(drawSize * 2).toFixed(1)} v${(drawSize * 2).toFixed(1)} h-${(drawSize * 2).toFixed(1)} z">\n`;
@@ -147,7 +157,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 xml += `                                  android:centerX="0" android:centerY="0"\n`;
                 xml += `                                  android:gradientRadius="${baseRadius.toFixed(2)}">\n`;
                 sortedStops.forEach(stop => {
-                    xml += `                            <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
+                    xml += `                            <item android:color="${toAndroidHex(stop.color, stop.opacity)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
                 });
                 xml += `                        </gradient>\n`;
                 xml += `                    </aapt:attr>\n`;
@@ -175,7 +185,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 xml += `                        <gradient android:type="sweep"\n`;
                 xml += `                                  android:centerX="0" android:centerY="0">\n`;
                 g.stops.sort((a,b) => a.position - b.position).forEach(stop => {
-                    xml += `                            <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
+                    xml += `                            <item android:color="${toAndroidHex(stop.color, stop.opacity)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
                 });
                 xml += `                        </gradient>\n`;
                 xml += `                    </aapt:attr>\n`;
@@ -188,17 +198,27 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z">\n`;
                 xml += `        <aapt:attr name="android:fillColor">\n`;
                 xml += `            <gradient android:type="linear"\n`;
-                const rad = ((g.angle || 0) - 90) * Math.PI / 180;
-                const length = Math.sqrt(w*w + h*h) * 2;
-                const x1 = centerX - (Math.cos(rad) * length / 2);
-                const y1 = centerY - (Math.sin(rad) * length / 2);
-                const x2 = centerX + (Math.cos(rad) * length / 2);
-                const y2 = centerY + (Math.sin(rad) * length / 2);
 
-                xml += `                      android:startX="${x1.toFixed(2)}" android:startY="${y1.toFixed(2)}"\n`;
-                xml += `                      android:endX="${x2.toFixed(2)}" android:endY="${y2.toFixed(2)}">\n`;
+                let startX, startY, endX, endY;
+
+                if (g.handles) {
+                    startX = g.handles.start.x;
+                    startY = g.handles.start.y;
+                    endX = g.handles.end.x;
+                    endY = g.handles.end.y;
+                } else {
+                    const rad = ((g.angle || 0) - 90) * Math.PI / 180;
+                    const length = Math.sqrt(w*w + h*h) * 2;
+                    startX = centerX - (Math.cos(rad) * length / 2);
+                    startY = centerY - (Math.sin(rad) * length / 2);
+                    endX = centerX + (Math.cos(rad) * length / 2);
+                    endY = centerY + (Math.sin(rad) * length / 2);
+                }
+
+                xml += `                      android:startX="${startX.toFixed(2)}" android:startY="${startY.toFixed(2)}"\n`;
+                xml += `                      android:endX="${endX.toFixed(2)}" android:endY="${endY.toFixed(2)}">\n`;
                 g.stops.sort((a,b) => a.position - b.position).forEach(stop => {
-                    xml += `                <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
+                    xml += `                <item android:color="${toAndroidHex(stop.color, stop.opacity)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
                 });
                 xml += `            </gradient>\n`;
                 xml += `        </aapt:attr>\n`;

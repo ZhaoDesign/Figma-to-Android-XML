@@ -9,6 +9,7 @@ export enum GradientType {
 export interface ColorStop {
   color: string;
   position: number;
+  opacity?: number;
 }
 
 export interface Gradient {
@@ -17,6 +18,10 @@ export interface Gradient {
   angle?: number; // Linear: direction; Angular: start angle; Radial: rotation angle
   center?: { x: number; y: number };
   size?: { x: number; y: number }; // Percentage values for elliptical axes
+  handles?: {
+    start: { x: number; y: number };
+    end: { x: number; y: number };
+  };
   rawGeometry?: string;
 }
 
