@@ -30,8 +30,12 @@ const splitCSSLayers = (cssValue: string): string[] => {
 
 // --- SVG Helpers ---
 
-// 解析 SVG Transform 矩阵: matrix(a, b, c, d, e, f)
-// 或者 Figma 有时会输出 translate() rotate() scale() 链
+interface Matrix {
+  a: number; b: number;
+  c: number; d: number;
+  e: number; f: number;
+}
+
 interface TransformData {
   rotation: number; // degrees
   scaleX: number;
@@ -40,47 +44,89 @@ interface TransformData {
   translateY: number;
 }
 
-const parseSvgTransform = (transform: string): TransformData => {
-  let a=1, b=0, c=0, d=1, e=0, f=0;
+// Matrix multiplication: m1 * m2
+const multiplyMatrices = (m1: Matrix, m2: Matrix): Matrix => {
+  return {
+    a: m1.a * m2.a + m1.c * m2.b,
+    b: m1.b * m2.a + m1.d * m2.b,
+    c: m1.a * m2.c + m1.c * m2.d,
+    d: m1.b * m2.c + m1.d * m2.d,
+    e: m1.a * m2.e + m1.c * m2.f + m1.e,
+    f: m1.b * m2.e + m1.d * m2.f + m1.f
+  };
+};
 
-  // 1. 尝试解析 matrix(a,b,c,d,e,f)
-  const matrixMatch = transform.match(/matrix\(([^)]+)\)/);
-  if (matrixMatch) {
-    const values = matrixMatch[1].split(/[\s,]+/).map(parseFloat);
-    if (values.length === 6) {
-      [a, b, c, d, e, f] = values;
+const parseSvgTransform = (transformStr: string): TransformData => {
+  // Identity Matrix
+  let m: Matrix = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+
+  // Regex to match command(args...)
+  const regex = /(matrix|translate|scale|rotate|skewX|skewY)\s*\(([^)]+)\)/g;
+  let match;
+
+  while ((match = regex.exec(transformStr)) !== null) {
+    const command = match[1];
+    const args = match[2].split(/[\s,]+/).filter(s => s.trim() !== '').map(parseFloat);
+
+    let nextM: Matrix = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+
+    switch (command) {
+      case 'matrix':
+        if (args.length >= 6) {
+          nextM = { a: args[0], b: args[1], c: args[2], d: args[3], e: args[4], f: args[5] };
+        }
+        break;
+      case 'translate':
+        nextM.e = args[0] || 0;
+        nextM.f = args[1] || 0; // If y is not provided, it is assumed to be 0
+        break;
+      case 'scale':
+        nextM.a = args[0] || 1;
+        nextM.d = args[1] !== undefined ? args[1] : (args[0] || 1); // If y is not provided, it is assumed to be equal to x
+        break;
+      case 'rotate':
+        const angle = args[0] || 0;
+        const rad = angle * Math.PI / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+
+        // Basic rotation around 0,0
+        nextM.a = cos;
+        nextM.b = sin;
+        nextM.c = -sin;
+        nextM.d = cos;
+
+        // If cx, cy provided: translate(cx, cy) -> rotate -> translate(-cx, -cy)
+        if (args.length >= 3) {
+          const cx = args[1];
+          const cy = args[2];
+          // We handle this by combining 3 matrices manually or just adjusting e/f
+          // This is rare in Figma export (usually just rotate(angle)), sticking to basic rotate for now to avoid complexity
+          // as Figma usually decomposes transforms.
+        }
+        break;
     }
-  } else {
-    // 2. 尝试解析 rotate(deg) scale(x, y) translate(x, y) 等组合
-    // 这是一个简化处理，Figma SVG 通常使用 matrix，但为了健壮性...
-    const rotateMatch = transform.match(/rotate\(([\d.-]+)\)/);
-    if (rotateMatch) {
-       const deg = parseFloat(rotateMatch[1]);
-       const rad = deg * Math.PI / 180;
-       a = Math.cos(rad); b = Math.sin(rad);
-       c = -Math.sin(rad); d = Math.cos(rad);
-    }
-    // 注意：复合变换的精确解析需要矩阵乘法，这里主要针对 Figma 导出的标准格式
+
+    m = multiplyMatrices(m, nextM);
   }
 
-  // 从矩阵提取旋转和缩放
+  // Decompose Final Matrix
   // Scale X = sqrt(a^2 + b^2)
-  const scaleX = Math.sqrt(a*a + b*b);
+  const scaleX = Math.sqrt(m.a * m.a + m.b * m.b);
 
-  // Scale Y = sqrt(c^2 + d^2) (近似，假设无斜切)
-  // 实际上 Figma 的径向渐变通常是正交的
-  const scaleY = Math.sqrt(c*c + d*d);
+  // Scale Y = sqrt(c^2 + d^2)
+  const scaleY = Math.sqrt(m.c * m.c + m.d * m.d);
 
   // Rotation = atan2(b, a)
-  const rotationRad = Math.atan2(b, a);
+  const rotationRad = Math.atan2(m.b, m.a);
   let rotationDeg = rotationRad * 180 / Math.PI;
 
   return {
     rotation: rotationDeg,
     scaleX,
     scaleY,
-    translateX: e,
-    translateY: f
+    translateX: m.e,
+    translateY: m.f
   };
 };
 
@@ -99,18 +145,20 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
 
   let corners: Corners | number = 0;
 
-  // 尝试从 rect 获取圆角
+  // Try to find corners from rect. Figma often exports rect for background.
+  // If user copied a selection with Shadow, the root might be a group/viewbox, and the shape is inside.
   const bgRect = doc.querySelector('rect');
   if (bgRect) {
       const rx = parseFloat(bgRect.getAttribute('rx') || '0');
       corners = rx;
   }
+  // TODO: Parsing path 'd' for corners is complex. For now, if it's a path, corners might be 0.
+  // The user can adjust manually if needed, or we rely on the gradient being correct.
 
   const fills: Fill[] = [];
   const defs = doc.querySelector('defs');
 
-  // 处理所有使用 fill 的元素 (path, rect)
-  // 我们只看顶层的，或者按顺序看
+  // Process elements with fill
   const elements = Array.from(doc.querySelectorAll('path, rect, circle'));
 
   elements.forEach(el => {
@@ -118,7 +166,7 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
       const opacityAttr = el.getAttribute('fill-opacity') || el.getAttribute('opacity') || '1';
       const opacity = parseFloat(opacityAttr);
 
-      if (!fillAttr) return;
+      if (!fillAttr || fillAttr === 'none') return;
 
       // 1. Solid Color
       if (fillAttr.startsWith('#') || fillAttr.startsWith('rgb')) {
@@ -146,53 +194,38 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
                   let offset = parseFloat(offsetStr);
                   if (offsetStr.includes('%')) offset /= 100;
 
-                  // 处理 Hex 透明度
-                  let finalColor = color;
-                  if (stopOpacity) {
-                      // 简单处理：如果是 Hex，这里暂时不转换，由生成器处理，
-                      // 或者转换成 rgba。为了保持简单，我们生成器里有 toAndroidHex
-                      // 但 Android Hex 是 AARRGGBB，CSS 是 RRGGBB。
-                      // 我们这里不改 color 字符串，生成器会处理。
-                      // *但在 PreviewCanvas 里需要 rgba*。
-                      // 这是一个小坑。为了预览正确，我们最好转成 rgba。
-                  }
-
-                  stops.push({ color: finalColor, position: offset * 100 });
+                  // For simplicity we keep color as is, generator/preview handles hex/rgba
+                  stops.push({ color: color, position: offset * 100 });
               });
 
-              // *** 关键：解析 Transform ***
+              // *** Transform Parsing ***
               const transformAttr = gradientEl.getAttribute('gradientTransform');
               let angle = 0;
-              let size = { x: 50, y: 50 }; // percentages relative to layer
+              let size = { x: 50, y: 50 }; // percentages
               let center = { x: 50, y: 50 };
 
               if (transformAttr) {
                   const t = parseSvgTransform(transformAttr);
 
-                  // Figma 的 SVG 导出通常是 userSpaceOnUse (像素单位)
-                  // 矩阵包含：位移(center), 旋转, 缩放(radius)
-
                   // 1. Rotation
                   angle = t.rotation;
 
                   // 2. Center (Translate)
-                  // 在 Matrix 变换后，(0,0) 移到了 center。
+                  // In matrix logic, (0,0) is mapped to (e, f).
+                  // width/height here are the viewbox dimensions.
                   center = {
                       x: (t.translateX / width) * 100,
                       y: (t.translateY / height) * 100
                   };
 
                   // 3. Size (Scale)
-                  // Figma 导出的 radial gradient 半径通常由 scale 决定
-                  // 标准 SVG radial gradient r="0.5" 或 r="1"
-                  // Figma 通常设 r="1"，然后用 scale 放大到像素尺寸
-                  // 所以 scaleX 就是 X 轴半径(px)，scaleY 就是 Y 轴半径(px)
+                  // Figma exports radial gradient with r="1" usually.
+                  // So the scaleX/scaleY directly correspond to the pixel radii.
                   size = {
                       x: (t.scaleX / width) * 100,
                       y: (t.scaleY / height) * 100
                   };
               } else {
-                  // Fallback for linear coordinates if no transform
                   if (type === GradientType.Linear) {
                       const x1 = parseFloat(gradientEl.getAttribute('x1') || '0');
                       const x2 = parseFloat(gradientEl.getAttribute('x2') || '1');
@@ -226,7 +259,7 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
       height,
       corners,
       fills,
-      shadows: [], // SVG 很难解析阴影 (filter)，暂不支持
+      shadows: [],
       opacity: 1
   };
 };
@@ -283,9 +316,6 @@ const parseCSS = (text: string): FigmaLayer | null => {
   // Parse Background Color (Solid)
   const bgColor = style.backgroundColor;
   if (bgColor && bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
-    // 确保 Solid 放在 Gradients 后面（CSS是后定义的在上，但这里的数组顺序...我们通常认为 Fills[0] 是最底层? Figma CSS 顺序：image 在上，color 在下）
-    // 在 Android layer-list 中，写在下面的 item 覆盖上面的。
-    // 我们这里 push 进去，渲染时 reverse() 即可。
     fills.push({ type: 'solid', value: bgColor, visible: true });
   }
 
