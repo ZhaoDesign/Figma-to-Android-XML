@@ -106,35 +106,44 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
             
             if (g.type === GradientType.Radial) {
                 // --- 径向渐变 (RADIAL) ---
-                let scaleY = h / w;
-                let baseRadius = Math.max(w, h);
-                
+                let radiusX = (w / 2);
+                let radiusY = (h / 2);
+
+                // 根据 CSS 提取的尺寸计算长短轴
                 if (g.size && g.size.x !== 0) {
-                    const horizRadiusPx = (g.size.x / 100) * w;
-                    const vertRadiusPx = (g.size.y / 100) * h;
-                    baseRadius = horizRadiusPx;
-                    scaleY = vertRadiusPx / horizRadiusPx;
+                    radiusX = (g.size.x / 100) * w;
+                    radiusY = (g.size.y / 100) * h;
                 }
 
-                // 关键修复：添加 android:rotation，允许径向渐变倾斜
+                // 确定基准半径（Android gradientRadius）和缩放比例
+                // 我们以 X 轴为基准半径，Y 轴通过 scaleY 来压缩或拉伸
+                const baseRadius = radiusX;
+                const scaleY = radiusY / radiusX;
                 const rotation = g.angle || 0;
 
+                // 修正：使用嵌套 Group 结构
+                // 外层 Group：负责旋转 (Rotation)
+                // 内层 Group：负责缩放 (Scale)，将圆形压扁成椭圆
+                // 这样可以确保旋转的是已经形成的椭圆，而不是先旋转坐标系再缩放（会导致剪切）
                 xml += `    <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
-                xml += `           android:rotation="${rotation.toFixed(2)}"\n`;
-                xml += `           android:scaleY="${scaleY.toFixed(6)}">\n`;
+                xml += `           android:rotation="${rotation.toFixed(2)}">\n`;
+                xml += `        <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
+                xml += `               android:scaleY="${scaleY.toFixed(6)}">\n`;
 
-                const fillSize = baseRadius * 8; // 放大绘制区域以防止旋转后边缘穿帮
-                xml += `        <path android:pathData="M${(centerX - fillSize).toFixed(1)},${(centerY - fillSize).toFixed(1)} h${(fillSize * 2).toFixed(1)} v${(fillSize * 2).toFixed(1)} h-${(fillSize * 2).toFixed(1)} z">\n`;
-                xml += `            <aapt:attr name="android:fillColor">\n`;
-                xml += `                <gradient android:type="radial"\n`;
-                xml += `                          android:centerX="${centerX.toFixed(2)}" android:centerY="${centerY.toFixed(2)}"\n`;
-                xml += `                          android:gradientRadius="${baseRadius.toFixed(2)}">\n`;
+                // 绘制一个足够大的矩形覆盖旋转后的区域
+                const fillSize = baseRadius * 4;
+                xml += `            <path android:pathData="M${(centerX - fillSize).toFixed(1)},${(centerY - fillSize).toFixed(1)} h${(fillSize * 2).toFixed(1)} v${(fillSize * 2).toFixed(1)} h-${(fillSize * 2).toFixed(1)} z">\n`;
+                xml += `                <aapt:attr name="android:fillColor">\n`;
+                xml += `                    <gradient android:type="radial"\n`;
+                xml += `                              android:centerX="${centerX.toFixed(2)}" android:centerY="${centerY.toFixed(2)}"\n`;
+                xml += `                              android:gradientRadius="${baseRadius.toFixed(2)}">\n`;
                 g.stops.sort((a,b) => a.position - b.position).forEach(stop => {
-                    xml += `                    <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
+                    xml += `                        <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
                 });
-                xml += `                </gradient>\n`;
-                xml += `            </aapt:attr>\n`;
-                xml += `        </path>\n`;
+                xml += `                    </gradient>\n`;
+                xml += `                </aapt:attr>\n`;
+                xml += `            </path>\n`;
+                xml += `        </group>\n`;
                 xml += `    </group>\n`;
             } else if (g.type === GradientType.Angular) {
                 // --- 角度渐变 (ANGULAR) ---

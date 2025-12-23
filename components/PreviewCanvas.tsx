@@ -55,25 +55,54 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
       const centerY = g.center?.y ?? 50;
 
       // --- 径向渐变 (Radial) ---
+      // 模拟 Android 渲染逻辑：创建一个圆，缩放其 Y 轴变成椭圆，然后旋转整个椭圆
       if (g.type === GradientType.Radial) {
-        // 由于 CSS radial-gradient 不支持旋转，我们必须旋转整个 div
-        const sizeX = g.size?.x ?? 50;
-        const sizeY = g.size?.y ?? 50;
+        // 1. 计算长短轴
+        let radiusX = 50; // default %
+        let radiusY = 50;
 
-        // 我们创建一个更大的 div 来确保旋转时覆盖整个区域
+        if (g.size) {
+            radiusX = g.size.x; // e.g. 42.57%
+            radiusY = g.size.y; // e.g. 100%
+        }
+
+        // 2. 计算缩放比例 (ScaleY)
+        // 注意：这里需要考虑容器的实际宽高比，因为 g.size 是百分比
+        // 在 Android 代码中：baseRadius = radiusX_px, scaleY = radiusY_px / radiusX_px
+        // 在 CSS transform scale 中，我们也是相对自身坐标系
+        // 但 CSS radial-gradient(circle) 生成正圆，我们需要压缩它
+
+        // 计算实际像素比例
+        const widthPx = data.width;
+        const heightPx = data.height;
+        const rX_px = (radiusX / 100) * widthPx;
+        const rY_px = (radiusY / 100) * heightPx;
+
+        const scaleY = rX_px === 0 ? 1 : rY_px / rX_px;
         const rotation = g.angle || 0;
-        const scale = 2.0; // 放大以防旋转后出现边缘
 
-        const background = `radial-gradient(${sizeX}% ${sizeY}% at 50% 50%, ${stopsStr})`;
+        // 使用一个超大的正方形容器来承载渐变，确保旋转后能覆盖
+        // 大小设为 200% 或更大
+        const bigSize = '200%';
+
+        // 背景是一个正圆渐变，半径为 rX_px (即100%宽度的 circle)
+        // 我们通过 transform scale(1, scaleY) 把它压扁
+        const background = `radial-gradient(circle closest-side, ${stopsStr})`;
 
         return (
           <div key={index} style={{
             position: 'absolute',
             left: `${centerX}%`,
             top: `${centerY}%`,
-            width: '100%',
-            height: '100%',
-            transform: `translate(-50%, -50%) rotate(${rotation}deg) scale(${scale})`,
+            width: rX_px * 2, // 宽度设为直径
+            height: rX_px * 2, // 高度也设为直径（正圆）
+            // 变换顺序：先平移居中 -> 旋转 -> 缩放
+            // 这里的顺序和 Android XML 的嵌套对应：
+            // Android Outer Group: Rotation
+            // Android Inner Group: ScaleY
+            // CSS: transform 属性从右向左执行（但写在字符串里是从左向右读？不，是矩阵乘法）
+            // 简单的理解：我们对这个 div 应用样式。
+            transform: `translate(-50%, -50%) rotate(${rotation}deg) scale(1, ${scaleY})`,
             transformOrigin: '50% 50%',
             opacity: fill.opacity ?? 1,
             mixBlendMode: (fill.blendMode || 'normal') as any,

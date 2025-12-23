@@ -159,10 +159,10 @@ const App: React.FC = () => {
                   />
                   <span className="text-xs font-mono text-gray-400 min-w-[3ch]">{Math.round(currentAngle)}°</span>
                </div>
-               <p className="text-xs text-gray-500 mt-2">
-                 * Figma CSS often omits radial gradient rotation. Use this slider to match the design. <br/>
-                 * Figma 复制的 CSS 常丢失径向渐变角度，请使用此滑块手动匹配。
-               </p>
+               <div className="text-xs text-orange-400/80 bg-orange-950/20 p-2 rounded border border-orange-900/30">
+                 ⚠️ <b>Why is manual adjustment needed?</b><br/>
+                 Figma's "Copy as CSS" intentionally <u>removes</u> the rotation angle for radial gradients (see the "warning" in your pasted CSS). This tool detects the shape automatically, but you must use the slider above to match the angle.
+               </div>
             </div>
           )}
 
