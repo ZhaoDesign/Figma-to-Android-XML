@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Palette, Info, Languages, Sliders, RotateCw, FileCode } from 'lucide-react';
+import { Palette, Info, Languages, FileCode } from 'lucide-react';
 import { INITIAL_DATA } from './constants';
-import { FigmaLayer, Gradient } from './types';
+import { FigmaLayer } from './types';
 import { parseClipboardData } from './services/parser';
 import { generateAndroidXML } from './services/androidGenerator';
 import { PreviewCanvas } from './components/PreviewCanvas';
@@ -79,25 +79,6 @@ const App: React.FC = () => {
     };
   }, [handlePaste]);
 
-  // Handle manual gradient rotation update
-  const updateGradientAngle = (angle: number) => {
-    setLayerData(prev => {
-      const newFills = [...prev.fills];
-      const gradIndex = newFills.findIndex(f => f.type === 'gradient' && f.visible);
-      if (gradIndex !== -1) {
-        const grad = newFills[gradIndex].value as Gradient;
-        newFills[gradIndex] = {
-          ...newFills[gradIndex],
-          value: { ...grad, angle: angle }
-        };
-      }
-      return { ...prev, fills: newFills };
-    });
-  };
-
-  const activeGradient = layerData.fills.find(f => f.type === 'gradient' && f.visible);
-  const currentAngle = activeGradient ? (activeGradient.value as Gradient).angle || 0 : 0;
-
   return (
     <div className="min-h-screen p-6 md:p-12 flex flex-col gap-8 max-w-7xl mx-auto">
 
@@ -138,37 +119,7 @@ const App: React.FC = () => {
 
           <PreviewCanvas data={layerData} label={t.previewOverlay} />
 
-          {/* Manual Controls Panel - Only show warning if NOT in SVG mode */}
-          {activeGradient && (
-            <div className="bg-gray-850 border border-gray-750 p-4 rounded-lg space-y-3">
-               <div className="flex items-center gap-2 text-sm text-gray-300 font-medium">
-                  <Sliders size={16} />
-                  <span>Properties / 属性调整</span>
-               </div>
-               <div className="grid grid-cols-[auto_1fr_auto] gap-4 items-center">
-                  <div className="flex items-center gap-2 text-gray-400 text-xs">
-                    <RotateCw size={14} />
-                    <span>Rotation</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="360"
-                    value={currentAngle}
-                    onChange={(e) => updateGradientAngle(Number(e.target.value))}
-                    className="h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500 w-full"
-                  />
-                  <span className="text-xs font-mono text-gray-400 min-w-[3ch]">{Math.round(currentAngle)}°</span>
-               </div>
-               {sourceType === 'css' && (
-                 <div className="text-xs text-orange-400/80 bg-orange-950/20 p-2 rounded border border-orange-900/30">
-                   ⚠️ <b>Use 'Copy as SVG' for precision</b><br/>
-                   Figma CSS export omits rotation angles. Switching to SVG copy-paste will auto-detect the perfect angle.
-                 </div>
-               )}
-            </div>
-          )}
-
+          {/* Info Box */}
           <div className="bg-blue-900/20 border border-blue-900/50 p-4 rounded-lg flex gap-3 text-blue-200 text-sm">
              <Info className="shrink-0 mt-0.5" size={16} />
              <div>

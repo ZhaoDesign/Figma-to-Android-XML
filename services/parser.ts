@@ -44,7 +44,7 @@ interface TransformData {
   translateY: number;
 }
 
-// Matrix multiplication: m1 * m2
+// Matrix multiplication: m1 * m2 (Standard SVG matrix order)
 const multiplyMatrices = (m1: Matrix, m2: Matrix): Matrix => {
   return {
     a: m1.a * m2.a + m1.c * m2.b,
@@ -61,6 +61,8 @@ const parseSvgTransform = (transformStr: string): TransformData => {
   let m: Matrix = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
 
   // Regex to match command(args...)
+  // Figma usually outputs: translate(...) rotate(...) scale(...)
+  // We process them left-to-right
   const regex = /(matrix|translate|scale|rotate|skewX|skewY)\s*\(([^)]+)\)/g;
   let match;
 
@@ -78,11 +80,12 @@ const parseSvgTransform = (transformStr: string): TransformData => {
         break;
       case 'translate':
         nextM.e = args[0] || 0;
-        nextM.f = args[1] || 0; // If y is not provided, it is assumed to be 0
+        nextM.f = args[1] !== undefined ? args[1] : 0;
         break;
       case 'scale':
         nextM.a = args[0] || 1;
-        nextM.d = args[1] !== undefined ? args[1] : (args[0] || 1); // If y is not provided, it is assumed to be equal to x
+        // SVG scale(s) means x=s, y=s. scale(sx, sy) means x=sx, y=sy
+        nextM.d = args[1] !== undefined ? args[1] : (args[0] || 1);
         break;
       case 'rotate':
         const angle = args[0] || 0;
@@ -96,13 +99,10 @@ const parseSvgTransform = (transformStr: string): TransformData => {
         nextM.c = -sin;
         nextM.d = cos;
 
-        // If cx, cy provided: translate(cx, cy) -> rotate -> translate(-cx, -cy)
         if (args.length >= 3) {
-          const cx = args[1];
-          const cy = args[2];
-          // We handle this by combining 3 matrices manually or just adjusting e/f
-          // This is rare in Figma export (usually just rotate(angle)), sticking to basic rotate for now to avoid complexity
-          // as Figma usually decomposes transforms.
+          // rotate(a, cx, cy) is NOT supported by this simple multiplier without extra steps
+          // but Figma export typically uses translate+rotate+translate for centers,
+          // or just translate+rotate. We assume simple rotate here.
         }
         break;
     }
@@ -110,14 +110,14 @@ const parseSvgTransform = (transformStr: string): TransformData => {
     m = multiplyMatrices(m, nextM);
   }
 
-  // Decompose Final Matrix
-  // Scale X = sqrt(a^2 + b^2)
+  // Decompose Final Matrix to extract geometric props
+  // Scale X (Radius X) = Vector length of first column
   const scaleX = Math.sqrt(m.a * m.a + m.b * m.b);
 
-  // Scale Y = sqrt(c^2 + d^2)
+  // Scale Y (Radius Y) = Vector length of second column
   const scaleY = Math.sqrt(m.c * m.c + m.d * m.d);
 
-  // Rotation = atan2(b, a)
+  // Rotation = Angle of first column vector
   const rotationRad = Math.atan2(m.b, m.a);
   let rotationDeg = rotationRad * 180 / Math.PI;
 
@@ -138,22 +138,35 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
   const svg = doc.querySelector('svg');
   if (!svg) return null;
 
-  const widthStr = svg.getAttribute('width') || svg.getAttribute('viewBox')?.split(' ')[2] || '0';
-  const heightStr = svg.getAttribute('height') || svg.getAttribute('viewBox')?.split(' ')[3] || '0';
-  const width = parseFloat(widthStr);
-  const height = parseFloat(heightStr);
+  // Robust Width/Height parsing
+  let width = 0;
+  let height = 0;
+
+  const wAttr = svg.getAttribute('width');
+  const hAttr = svg.getAttribute('height');
+  const viewBox = svg.getAttribute('viewBox');
+
+  if (wAttr && hAttr) {
+      width = parseFloat(wAttr);
+      height = parseFloat(hAttr);
+  } else if (viewBox) {
+      const parts = viewBox.split(/[\s,]+/).filter(Boolean).map(parseFloat);
+      if (parts.length === 4) {
+          width = parts[2];
+          height = parts[3];
+      }
+  }
+
+  if (!width || !height) width = height = 100; // Fallback
 
   let corners: Corners | number = 0;
 
   // Try to find corners from rect. Figma often exports rect for background.
-  // If user copied a selection with Shadow, the root might be a group/viewbox, and the shape is inside.
   const bgRect = doc.querySelector('rect');
   if (bgRect) {
       const rx = parseFloat(bgRect.getAttribute('rx') || '0');
       corners = rx;
   }
-  // TODO: Parsing path 'd' for corners is complex. For now, if it's a path, corners might be 0.
-  // The user can adjust manually if needed, or we rely on the gradient being correct.
 
   const fills: Fill[] = [];
   const defs = doc.querySelector('defs');
@@ -188,21 +201,22 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
 
               Array.from(gradientEl.querySelectorAll('stop')).forEach(stop => {
                   const color = stop.getAttribute('stop-color') || '#000000';
-                  const stopOpacity = stop.getAttribute('stop-opacity');
+                  // Handle stop opacity if present
+                  let stopOpacity = parseFloat(stop.getAttribute('stop-opacity') || '1');
                   const offsetStr = stop.getAttribute('offset') || '0';
 
                   let offset = parseFloat(offsetStr);
                   if (offsetStr.includes('%')) offset /= 100;
 
-                  // For simplicity we keep color as is, generator/preview handles hex/rgba
                   stops.push({ color: color, position: offset * 100 });
               });
 
               // *** Transform Parsing ***
               const transformAttr = gradientEl.getAttribute('gradientTransform');
               let angle = 0;
-              let size = { x: 50, y: 50 }; // percentages
+              // Default Center/Size in percentages
               let center = { x: 50, y: 50 };
+              let size = { x: 50, y: 50 };
 
               if (transformAttr) {
                   const t = parseSvgTransform(transformAttr);
@@ -210,17 +224,15 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
                   // 1. Rotation
                   angle = t.rotation;
 
-                  // 2. Center (Translate)
-                  // In matrix logic, (0,0) is mapped to (e, f).
-                  // width/height here are the viewbox dimensions.
+                  // 2. Center (Translate) - Convert px to %
+                  // Note: (0,0) in gradient matrix is usually the center of the radial gradient
                   center = {
                       x: (t.translateX / width) * 100,
                       y: (t.translateY / height) * 100
                   };
 
-                  // 3. Size (Scale)
-                  // Figma exports radial gradient with r="1" usually.
-                  // So the scaleX/scaleY directly correspond to the pixel radii.
+                  // 3. Size (Scale) - Convert px to %
+                  // In Figma SVG, r="1" is default. So scaleX/scaleY are the actual pixel radii.
                   size = {
                       x: (t.scaleX / width) * 100,
                       y: (t.scaleY / height) * 100
@@ -264,8 +276,6 @@ const parseSVG = (svgText: string): FigmaLayer | null => {
   };
 };
 
-// --- Main Parse Function ---
-
 export const parseClipboardData = (text: string): FigmaLayer | null => {
   // 1. Try SVG First (Perfect fidelity)
   if (text.trim().startsWith('<svg') || text.includes('xmlns="http://www.w3.org/2000/svg"')) {
@@ -281,7 +291,6 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   return parseCSS(text);
 };
 
-// ... 原有的 parseCSS 逻辑移动到这里 ...
 const parseCSS = (text: string): FigmaLayer | null => {
   const tempDiv = document.createElement('div');
   tempDiv.style.display = 'none';
@@ -301,7 +310,6 @@ const parseCSS = (text: string): FigmaLayer | null => {
 
   const fills: Fill[] = [];
 
-  // Parse Background Image (Gradients)
   const bgImage = style.backgroundImage;
   if (bgImage && bgImage !== 'none') {
     const layers = splitCSSLayers(bgImage);
@@ -313,7 +321,6 @@ const parseCSS = (text: string): FigmaLayer | null => {
     });
   }
 
-  // Parse Background Color (Solid)
   const bgColor = style.backgroundColor;
   if (bgColor && bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
     fills.push({ type: 'solid', value: bgColor, visible: true });
@@ -345,7 +352,6 @@ const parseCSS = (text: string): FigmaLayer | null => {
   return { name: 'Figma Layer', width, height, corners, fills, shadows, opacity: 1 };
 };
 
-// 导出 parseGradient 供内部 CSS 解析使用
 const parseGradient = (gradientStr: string): Gradient | null => {
   const lowerStr = gradientStr.toLowerCase();
   const isLinear = lowerStr.includes('linear-gradient');

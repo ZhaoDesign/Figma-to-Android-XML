@@ -17,14 +17,14 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
     ? `${data.corners}px` 
     : `${data.corners.topLeft}px ${data.corners.topRight}px ${data.corners.bottomRight}px ${data.corners.bottomLeft}px`;
 
-  // 这是最外层的容器，负责“形状”和“剪切”
+  // Container style
   const containerStyle: React.CSSProperties = {
     width: data.width,
     height: data.height,
     borderRadius: borderRadius,
     position: 'relative',
     transition: 'all 0.3s ease',
-    overflow: 'hidden', // 关键：确保旋转的内容不会溢出圆角边界
+    overflow: 'hidden',
     isolation: 'isolate',
     filter: data.blur ? `blur(${data.blur}px)` : undefined,
     boxShadow: dropShadows,
@@ -52,41 +52,25 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
         .map(s => `${s.color} ${s.position}%`)
         .join(', ');
 
-      const centerX = g.center?.x ?? 50;
-      const centerY = g.center?.y ?? 50;
+      // Use Pixel values derived from parser
+      const centerX_px = (g.center?.x ?? 50) * data.width / 100;
+      const centerY_px = (g.center?.y ?? 50) * data.height / 100;
 
-      // --- 径向渐变 (Radial) ---
+      // --- Radial Gradient ---
       if (g.type === GradientType.Radial) {
-        // SVG 解析出的 size.x 是相对于 width 的百分比
-        // 例如 Figma 导出 r="1" scaleX="126" width="296" -> size.x = 42.5%
 
-        let rX_px = 0;
+        let rX_px = data.width / 2;
         let scaleY = 1;
 
         if (g.size) {
-            const widthPx = data.width;
-            const heightPx = data.height;
-            rX_px = (g.size.x / 100) * widthPx;
-            const rY_px = (g.size.y / 100) * heightPx;
-
-            // 防止除以0
+            rX_px = (g.size.x / 100) * data.width;
+            const rY_px = (g.size.y / 100) * data.height;
             if (rX_px > 0) {
                 scaleY = rY_px / rX_px;
             }
-        } else {
-             rX_px = data.width / 2;
         }
 
         const rotation = g.angle || 0;
-
-        // 渲染策略：
-        // 为了防止旋转时出现边缘空白，我们不将 div 设为 rX_px * 2。
-        // 因为如果 rX 比较小（例如按钮中间的一个光斑），那没问题。
-        // 但如果渐变很大，旋转可能会导致裁剪。
-        // 关键点：CSS transform 是以自身的中心旋转的。
-
-        // 我们创建一个 div，大小正好是渐变椭圆的长轴直径 (rX * 2)
-        // 然后放置在 center 位置
         const diameter = rX_px * 2;
 
         const background = `radial-gradient(circle closest-side, ${stopsStr})`;
@@ -94,15 +78,15 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
         return (
           <div key={index} style={{
             position: 'absolute',
-            left: `${centerX}%`,
-            top: `${centerY}%`,
+            left: 0,
+            top: 0,
             width: diameter,
             height: diameter,
-            // 变换顺序：
-            // 1. translate(-50%, -50%): 把 div 的中心点对齐到 (left, top)
-            // 2. rotate(...): 旋转
-            // 3. scale(1, scaleY): 压扁成椭圆
-            transform: `translate(-50%, -50%) rotate(${rotation}deg) scale(1, ${scaleY})`,
+            // 1. Move origin of div (top-left) to the Center Position (centerX, centerY)
+            // 2. Adjust for div being centered on that point (translate -50%)
+            // 3. Rotate
+            // 4. Scale Y
+            transform: `translate3d(${centerX_px}px, ${centerY_px}px, 0) translate3d(-50%, -50%, 0) rotate(${rotation}deg) scale(1, ${scaleY})`,
             transformOrigin: '50% 50%',
             opacity: fill.opacity ?? 1,
             mixBlendMode: (fill.blendMode || 'normal') as any,
@@ -112,8 +96,7 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
         );
       }
 
-      // ... (其他渐变类型保持不变) ...
-      // --- 角度渐变 (Angular) ---
+      // --- Angular Gradient ---
       if (g.type === GradientType.Angular) {
         let scaleY = (data.height / data.width);
         if (g.size && g.size.x !== 0) {
@@ -126,12 +109,12 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
           <div key={index}
             style={{
               position: 'absolute',
-              left: `${centerX}%`,
-              top: `${centerY}%`,
+              left: 0,
+              top: 0,
               width: size,
               height: size,
               pointerEvents: 'none',
-              transform: `translate(-50%, -50%) scale(1, ${scaleY})`,
+              transform: `translate3d(${centerX_px}px, ${centerY_px}px, 0) translate3d(-50%, -50%, 0) scale(1, ${scaleY})`,
               opacity: fill.opacity ?? 1,
               mixBlendMode: (fill.blendMode || 'normal') as any,
               transformOrigin: '50% 50%'
@@ -148,7 +131,7 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
         );
       }
 
-      // 线性渐变 (Linear)
+      // Linear Gradient
       const background = `linear-gradient(${g.angle || 0}deg, ${stopsStr})`;
       return (
         <div key={index} style={{
@@ -171,14 +154,7 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
       </div>
 
       <div className="relative">
-         {/* 渲染整个按钮容器 */}
          <div style={containerStyle}>
-            {/* 反转顺序渲染，因为 Figma 顶层在 fills[length-1] 还是 [0]? */}
-            {/* parser.ts 中我们按顺序 push，通常 CSS 中 bg-image 越靠前越在上面。*/}
-            {/* SVG 中后面的元素覆盖前面的。 */}
-            {/* 我们在 parser 中如果是 SVG，按 DOM 顺序 (底 -> 顶)。 */}
-            {/* 如果是 CSS，bg-image 逗号分隔，第一个在最上面。 */}
-            {/* 为了统一起见，我们在 Preview 这里假设 fills 数组是 [底, ..., 顶] */}
             {data.fills.map((fill, index) => renderFill(fill, index))}
             
             <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">

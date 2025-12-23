@@ -86,14 +86,16 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
         xml += `    </group>\n`;
     });
 
-    // Global Clipping
+    // Global Clipping Path
+    // We use a Clip Path to mask the entire button shape.
+    // This allows us to draw large gradients behind it that are clipped to the button's bounds.
     const mainPath = getRoundedRectPath(w, h, layer.corners);
     xml += `    <clip-path android:pathData="${mainPath}" />\n\n`;
 
     // Fills
     [...layer.fills].reverse().forEach((fill, idx) => {
         if (!fill.visible) return;
-        
+
         xml += `    <!-- Fill ${idx + 1}: ${fill.type.toUpperCase()} -->\n`;
 
         if (fill.type === 'solid') {
@@ -101,78 +103,90 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
             xml += `          android:fillColor="${toAndroidHex(fill.value as string)}" />\n`;
         } else if (fill.type === 'gradient') {
             const g = fill.value as Gradient;
+
+            // Calculate absolute pixel values from percentages
             const centerX = (g.center?.x ?? 50) * w / 100;
             const centerY = (g.center?.y ?? 50) * h / 100;
-            
+
             if (g.type === GradientType.Radial) {
-                // --- 径向渐变 (RADIAL) ---
+                // --- RADIAL GRADIENT LOGIC ---
+                // Figma Export: Translate -> Rotate -> Scale
+                // We must nest groups in this order: Outer(Translate) -> Middle(Rotate) -> Inner(Scale)
+
                 let radiusX = (w / 2);
                 let radiusY = (h / 2);
 
-                // 根据 CSS 提取的尺寸计算长短轴
                 if (g.size && g.size.x !== 0) {
                     radiusX = (g.size.x / 100) * w;
                     radiusY = (g.size.y / 100) * h;
                 }
 
-                // 确定基准半径（Android gradientRadius）和缩放比例
-                // 我们以 X 轴为基准半径，Y 轴通过 scaleY 来压缩或拉伸
+                // Base radius for the gradient definition (circle)
                 const baseRadius = radiusX;
+                // Scale factor to squash the circle into an ellipse
                 const scaleY = radiusY / radiusX;
                 const rotation = g.angle || 0;
 
-                // 修正：使用嵌套 Group 结构
-                // 外层 Group：负责旋转 (Rotation)
-                // 内层 Group：负责缩放 (Scale)，将圆形压扁成椭圆
-                // 这样可以确保旋转的是已经形成的椭圆，而不是先旋转坐标系再缩放（会导致剪切）
-                xml += `    <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
-                xml += `           android:rotation="${rotation.toFixed(2)}">\n`;
-                xml += `        <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
-                xml += `               android:scaleY="${scaleY.toFixed(6)}">\n`;
+                // 1. Outer Group: Position (Translate to Center)
+                xml += `    <group android:translateX="${centerX.toFixed(2)}" android:translateY="${centerY.toFixed(2)}">\n`;
 
-                // 绘制一个足够大的矩形覆盖旋转后的区域
-                const fillSize = baseRadius * 4;
-                xml += `            <path android:pathData="M${(centerX - fillSize).toFixed(1)},${(centerY - fillSize).toFixed(1)} h${(fillSize * 2).toFixed(1)} v${(fillSize * 2).toFixed(1)} h-${(fillSize * 2).toFixed(1)} z">\n`;
-                xml += `                <aapt:attr name="android:fillColor">\n`;
-                xml += `                    <gradient android:type="radial"\n`;
-                xml += `                              android:centerX="${centerX.toFixed(2)}" android:centerY="${centerY.toFixed(2)}"\n`;
-                xml += `                              android:gradientRadius="${baseRadius.toFixed(2)}">\n`;
+                // 2. Middle Group: Rotation
+                xml += `        <group android:rotation="${rotation.toFixed(2)}">\n`;
+
+                // 3. Inner Group: Scale (Aspect Ratio)
+                // We pivot at 0,0 (relative to the translated center)
+                xml += `            <group android:scaleY="${scaleY.toFixed(6)}">\n`;
+
+                // 4. Path & Gradient
+                // Draw a square large enough to cover the gradient area.
+                // Centered at 0,0 (local coordinates). Size: diameter * 2 to be safe.
+                const drawSize = baseRadius * 2;
+                xml += `                <path android:pathData="M${(-drawSize).toFixed(1)},${(-drawSize).toFixed(1)} h${(drawSize * 2).toFixed(1)} v${(drawSize * 2).toFixed(1)} h-${(drawSize * 2).toFixed(1)} z">\n`;
+                xml += `                    <aapt:attr name="android:fillColor">\n`;
+                xml += `                        <gradient android:type="radial"\n`;
+                xml += `                                  android:centerX="0" android:centerY="0"\n`;
+                xml += `                                  android:gradientRadius="${baseRadius.toFixed(2)}">\n`;
                 g.stops.sort((a,b) => a.position - b.position).forEach(stop => {
-                    xml += `                        <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
+                    xml += `                            <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
                 });
-                xml += `                    </gradient>\n`;
-                xml += `                </aapt:attr>\n`;
-                xml += `            </path>\n`;
+                xml += `                        </gradient>\n`;
+                xml += `                    </aapt:attr>\n`;
+                xml += `                </path>\n`;
+
+                xml += `            </group>\n`;
                 xml += `        </group>\n`;
                 xml += `    </group>\n`;
+
             } else if (g.type === GradientType.Angular) {
-                // --- 角度渐变 (ANGULAR) ---
+                 // --- ANGULAR GRADIENT LOGIC ---
                 let scaleY = h / w;
                 if (g.size && g.size.x !== 0) {
                     scaleY = (g.size.y / g.size.x) * (h / w);
                 }
                 const rotation = (g.angle || 0) - 90;
 
-                xml += `    <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
-                xml += `           android:scaleY="${scaleY.toFixed(6)}">\n`;
-                xml += `        <group android:pivotX="${centerX.toFixed(2)}" android:pivotY="${centerY.toFixed(2)}"\n`;
-                xml += `               android:rotation="${rotation.toFixed(2)}">\n`;
-                
+                xml += `    <group android:translateX="${centerX.toFixed(2)}" android:translateY="${centerY.toFixed(2)}">\n`;
+                xml += `        <group android:scaleY="${scaleY.toFixed(6)}">\n`;
+                xml += `            <group android:rotation="${rotation.toFixed(2)}">\n`;
+
                 const sweepSize = Math.max(w, h) * 4;
-                xml += `            <path android:pathData="M${(centerX - sweepSize).toFixed(1)},${(centerY - sweepSize).toFixed(1)} h${(sweepSize * 2).toFixed(1)} v${(sweepSize * 2).toFixed(1)} h-${(sweepSize * 2).toFixed(1)} z">\n`;
-                xml += `                <aapt:attr name="android:fillColor">\n`;
-                xml += `                    <gradient android:type="sweep"\n`;
-                xml += `                              android:centerX="${centerX.toFixed(2)}" android:centerY="${centerY.toFixed(2)}">\n`;
+                xml += `                <path android:pathData="M${(-sweepSize).toFixed(1)},${(-sweepSize).toFixed(1)} h${(sweepSize * 2).toFixed(1)} v${(sweepSize * 2).toFixed(1)} h-${(sweepSize * 2).toFixed(1)} z">\n`;
+                xml += `                    <aapt:attr name="android:fillColor">\n`;
+                xml += `                        <gradient android:type="sweep"\n`;
+                xml += `                                  android:centerX="0" android:centerY="0">\n`;
                 g.stops.sort((a,b) => a.position - b.position).forEach(stop => {
-                    xml += `                        <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
+                    xml += `                            <item android:color="${toAndroidHex(stop.color)}" android:offset="${(stop.position / 100).toFixed(4)}" />\n`;
                 });
-                xml += `                    </gradient>\n`;
-                xml += `                </aapt:attr>\n`;
-                xml += `            </path>\n`;
+                xml += `                        </gradient>\n`;
+                xml += `                    </aapt:attr>\n`;
+                xml += `                </path>\n`;
+                xml += `            </group>\n`;
                 xml += `        </group>\n`;
                 xml += `    </group>\n`;
             } else {
-                // 线性渐变 (LINEAR)
+                // --- LINEAR GRADIENT (Simple Fallback, complex linear supported via points) ---
+                // For complex linear transforms from SVG, we might need a similar Group approach,
+                // but standard Linear is usually defined by start/end points.
                 xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z">\n`;
                 xml += `        <aapt:attr name="android:fillColor">\n`;
                 xml += `            <gradient android:type="linear"\n`;
