@@ -111,7 +111,6 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
             if (g.type === GradientType.Radial) {
                 // --- RADIAL GRADIENT LOGIC ---
                 // Figma Export: Translate -> Rotate -> Scale
-                // We must nest groups in this order: Outer(Translate) -> Middle(Rotate) -> Inner(Scale)
 
                 let radiusX = (w / 2);
                 let radiusY = (h / 2);
@@ -121,26 +120,22 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                     radiusY = (g.size.y / 100) * h;
                 }
 
-                // Base radius for the gradient definition (circle)
+                // Base radius for the gradient definition
                 const baseRadius = radiusX;
                 // Scale factor to squash the circle into an ellipse
                 const scaleY = radiusY / radiusX;
                 const rotation = g.angle || 0;
 
-                // 1. Outer Group: Position (Translate to Center)
                 xml += `    <group android:translateX="${centerX.toFixed(2)}" android:translateY="${centerY.toFixed(2)}">\n`;
-
-                // 2. Middle Group: Rotation
                 xml += `        <group android:rotation="${rotation.toFixed(2)}">\n`;
-
-                // 3. Inner Group: Scale (Aspect Ratio)
-                // We pivot at 0,0 (relative to the translated center)
                 xml += `            <group android:scaleY="${scaleY.toFixed(6)}">\n`;
 
-                // 4. Path & Gradient
-                // Draw a square large enough to cover the gradient area.
-                // Centered at 0,0 (local coordinates). Size: diameter * 2 to be safe.
-                const drawSize = baseRadius * 2;
+                // IMPORTANT: make the drawing path HUGE to cover the entire button area.
+                // Android gradients default to "clamp" mode, so pixels outside the gradientRadius
+                // will be filled with the last color stop.
+                // We use Math.max(w, h) * 4 to ensure it covers everything even after rotation/scale.
+                const drawSize = Math.max(w, h) * 4;
+
                 xml += `                <path android:pathData="M${(-drawSize).toFixed(1)},${(-drawSize).toFixed(1)} h${(drawSize * 2).toFixed(1)} v${(drawSize * 2).toFixed(1)} h-${(drawSize * 2).toFixed(1)} z">\n`;
                 xml += `                    <aapt:attr name="android:fillColor">\n`;
                 xml += `                        <gradient android:type="radial"\n`;
@@ -184,9 +179,7 @@ export const generateAndroidXML = (layer: FigmaLayer): string => {
                 xml += `        </group>\n`;
                 xml += `    </group>\n`;
             } else {
-                // --- LINEAR GRADIENT (Simple Fallback, complex linear supported via points) ---
-                // For complex linear transforms from SVG, we might need a similar Group approach,
-                // but standard Linear is usually defined by start/end points.
+                // --- LINEAR GRADIENT ---
                 xml += `    <path android:pathData="M0,0 h${w} v${h} h-${w} z">\n`;
                 xml += `        <aapt:attr name="android:fillColor">\n`;
                 xml += `            <gradient android:type="linear"\n`;

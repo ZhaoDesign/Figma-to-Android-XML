@@ -71,21 +71,24 @@ export const PreviewCanvas: React.FC<Props> = ({ data, label }) => {
         }
 
         const rotation = g.angle || 0;
-        const diameter = rX_px * 2;
 
-        const background = `radial-gradient(circle closest-side, ${stopsStr})`;
+        // IMPORTANT: CSS radial-gradient extends color of last stop to infinity.
+        // We use explicit pixel size syntax: `circle ${radius}px`
+        // And we make the container HUGE (4x max dimension) to ensure it covers the button.
+        const extendSize = Math.max(data.width, data.height) * 4;
+
+        const background = `radial-gradient(circle ${rX_px.toFixed(2)}px at center, ${stopsStr})`;
 
         return (
           <div key={index} style={{
             position: 'absolute',
             left: 0,
             top: 0,
-            width: diameter,
-            height: diameter,
-            // 1. Move origin of div (top-left) to the Center Position (centerX, centerY)
-            // 2. Adjust for div being centered on that point (translate -50%)
-            // 3. Rotate
-            // 4. Scale Y
+            width: extendSize,
+            height: extendSize,
+            // 1. Center the HUGE div at the gradient center
+            // 2. Rotate
+            // 3. Scale Y
             transform: `translate3d(${centerX_px}px, ${centerY_px}px, 0) translate3d(-50%, -50%, 0) rotate(${rotation}deg) scale(1, ${scaleY})`,
             transformOrigin: '50% 50%',
             opacity: fill.opacity ?? 1,
