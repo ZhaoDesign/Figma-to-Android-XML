@@ -46,23 +46,17 @@ const parseGradient = (gradientStr: string): Gradient | null => {
   let angle = 0;
   let stopsStartIndex = 0;
   let center = { x: 50, y: 50 };
-  let size = { x: 100, y: 100 };
-  let rawGeometry: string | undefined = undefined;
+  let size = { x: 50, y: 50 }; // Default radii percentages (standard CSS radial is 50% 50%)
 
-  const firstPart = parts[0];
+  const firstPart = parts[0].trim();
   const firstPartLower = firstPart.toLowerCase();
-  
+
   if (isConic) {
       const fromMatch = firstPartLower.match(/from\s+([\d.]+)deg/);
-      if (fromMatch) {
-          angle = parseFloat(fromMatch[1]);
-          stopsStartIndex = 1;
-      }
+      if (fromMatch) angle = parseFloat(fromMatch[1]);
       const atMatch = firstPartLower.match(/at\s+([\d.]+)%\s+([\d.]+)%/);
-      if (atMatch) {
-          center = { x: parseFloat(atMatch[1]), y: parseFloat(atMatch[2]) };
-          stopsStartIndex = 1;
-      }
+      if (atMatch) center = { x: parseFloat(atMatch[1]), y: parseFloat(atMatch[2]) };
+      stopsStartIndex = 1;
   } else if (isLinear) {
       const degMatch = firstPartLower.match(/([\d.]+)deg/);
       if (degMatch) {
@@ -70,45 +64,78 @@ const parseGradient = (gradientStr: string): Gradient | null => {
           stopsStartIndex = 1;
       }
   } else if (isRadial) {
-      // Handle size and position: radial-gradient(45.67% 50% at 54.56% 50%, ...)
-      const sizePosMatch = firstPartLower.match(/([\d.]+)%\s+([\d.]+)%\s+at\s+([\d.]+)%\s+([\d.]+)%/);
-      if (sizePosMatch) {
-          size = { x: parseFloat(sizePosMatch[1]), y: parseFloat(sizePosMatch[2]) };
-          center = { x: parseFloat(sizePosMatch[3]), y: parseFloat(sizePosMatch[4]) };
+      // 修复逻辑：更稳健地解析 Figma 的径向渐变语法
+      // 常见格式: "48.14% 50% at 50% 50%" 或 "at 50% 50%"
+
+      // 只要包含 " at "，我们就认为第一部分是参数定义，而不是颜色
+      if (firstPartLower.includes(' at ') || firstPartLower.startsWith('at ')) {
           stopsStartIndex = 1;
-      } else {
-          const atMatch = firstPartLower.match(/at\s+([\d.]+)%\s+([\d.]+)%/);
-          if (atMatch) {
-              center = { x: parseFloat(atMatch[1]), y: parseFloat(atMatch[2]) };
-              stopsStartIndex = 1;
+
+          // 分割尺寸和位置
+          // 格式: [size part] at [position part]
+          const atIndex = firstPartLower.indexOf('at');
+          const sizeStr = firstPartLower.substring(0, atIndex).trim();
+          const posStr = firstPartLower.substring(atIndex + 2).trim(); // +2 for length of "at"
+
+          // 提取尺寸 (例如: "48.14% 50%")
+          const sizeMatches = sizeStr.match(/([\d.]+)%/g);
+          if (sizeMatches && sizeMatches.length >= 2) {
+             // 移除 % 后转数字
+             size = {
+                 x: parseFloat(sizeMatches[0]),
+                 y: parseFloat(sizeMatches[1])
+             };
+          } else if (sizeMatches && sizeMatches.length === 1) {
+             // 只有一个值，则通常用于圆形，宽高一致
+             const val = parseFloat(sizeMatches[0]);
+             size = { x: val, y: val };
           }
-      }
-      if (lowerStr.includes('diamond') || lowerStr.includes('ellipse')) {
-          type = GradientType.Diamond;
+
+          // 提取位置 (例如: "50% 50%")
+          const posMatches = posStr.match(/([\d.]+)%/g);
+          if (posMatches && posMatches.length >= 2) {
+              center = {
+                  x: parseFloat(posMatches[0]),
+                  y: parseFloat(posMatches[1])
+              };
+          }
+      } else {
+          // 尝试匹配没有 "at" 但开头是百分比的情况 (罕见，但为了保险)
+          const pureSizeMatch = firstPartLower.match(/^([\d.]+)%\s+([\d.]+)%$/);
+          if (pureSizeMatch) {
+             stopsStartIndex = 1;
+             size = { x: parseFloat(pureSizeMatch[1]), y: parseFloat(pureSizeMatch[2]) };
+          }
       }
   }
 
   const stops: ColorStop[] = [];
-  parts.slice(stopsStartIndex).forEach((part, index, arr) => {
-    const match = part.match(/^([\s\S]+?)(?:\s+(-?[\d.]+(?:%|px|deg|))|)$/);
+  const rawStops = parts.slice(stopsStartIndex);
+
+  rawStops.forEach((part, index) => {
+    // Regex to capture color and optional position
+    // 允许颜色值中包含括号 (例如 rgba)
+    const match = part.trim().match(/^([\s\S]+?)(?:\s+(-?[\d.]+(?:%|px|deg|))|)$/);
     if (match) {
       let colorStr = match[1].trim();
       let posVal = match[2];
       let position = 0;
-      
-      if (posVal) {
-          if (posVal.includes('%')) position = parseFloat(posVal);
-          else if (posVal.includes('deg')) position = (parseFloat(posVal) / 360) * 100;
-          else position = parseFloat(posVal);
-      } else {
-          position = arr.length > 1 ? (index / (arr.length - 1)) * 100 : 0;
+
+      // 过滤掉因为解析错误导致的非颜色字符串
+      if (colorStr.includes(' at ') || colorStr.length > 50) {
+          return;
       }
-      
-      stops.push({ color: colorStr, position: isNaN(position) ? 0 : position });
+
+      if (posVal) {
+          position = parseFloat(posVal);
+      } else {
+          position = rawStops.length > 1 ? (index / (rawStops.length - 1)) * 100 : 0;
+      }
+      stops.push({ color: colorStr, position });
     }
   });
 
-  return { type, angle, center, size, rawGeometry, stops };
+  return { type, angle, center, size, stops };
 };
 
 export const parseClipboardData = (text: string): FigmaLayer | null => {
@@ -122,7 +149,7 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
 
   const width = pxToNum(style.width) || 200;
   const height = pxToNum(style.height) || 60;
-  
+
   const radiusStr = style.borderRadius || '0px';
   const radii = radiusStr.split(/\s+/).map(pxToNum);
   let corners: number | Corners = radii[0] || 0;
@@ -132,7 +159,7 @@ export const parseClipboardData = (text: string): FigmaLayer | null => {
   const bgImage = style.backgroundImage;
   if (bgImage && bgImage !== 'none') {
     const layers = splitCSSLayers(bgImage);
-    layers.forEach((layer, idx) => {
+    layers.forEach((layer) => {
       const gradient = parseGradient(layer);
       if (gradient) {
         fills.push({ type: 'gradient', value: gradient, visible: true, blendMode: 'normal' });
